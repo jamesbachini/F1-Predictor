@@ -37,6 +37,7 @@ export interface IStorage {
   // Market operations
   buyShares(request: BuySharesRequest): Promise<{ success: boolean; error?: string; transaction?: Transaction }>;
   getPrizePool(): Promise<number>;
+  getSharesSoldByTeam(): Promise<Map<string, number>>;
   
   // Deposits
   createDeposit(deposit: InsertDeposit): Promise<Deposit>;
@@ -168,6 +169,22 @@ export class DatabaseStorage implements IStorage {
       .limit(limit);
   }
 
+  async getSharesSoldByTeam(): Promise<Map<string, number>> {
+    const allTransactions = await db.select().from(transactions);
+    const sharesByTeam = new Map<string, number>();
+    
+    for (const tx of allTransactions) {
+      const current = sharesByTeam.get(tx.teamId) || 0;
+      if (tx.type === "buy") {
+        sharesByTeam.set(tx.teamId, current + tx.shares);
+      } else if (tx.type === "sell") {
+        sharesByTeam.set(tx.teamId, current - tx.shares);
+      }
+    }
+    
+    return sharesByTeam;
+  }
+
   // Market operations
   async buyShares(request: BuySharesRequest): Promise<{ success: boolean; error?: string; transaction?: Transaction }> {
     const { teamId, quantity, userId } = request;
@@ -191,19 +208,12 @@ export class DatabaseStorage implements IStorage {
       return { success: false, error: "Insufficient balance" };
     }
 
-    // Check available shares
-    if (team.availableShares < quantity) {
-      return { success: false, error: "Not enough shares available" };
-    }
-
     // Update user balance
     await this.updateUserBalance(userId, user.balance - totalCost);
 
-    // Update team available shares and price (slight increase on demand)
-    const newAvailableShares = team.availableShares - quantity;
-    const priceIncrease = (quantity / team.totalShares) * 0.01; // Small price increase based on demand
+    // Update team price (slight increase on demand) - no share limit
+    const priceIncrease = quantity * 0.000001; // Small price increase based on demand
     await this.updateTeam(teamId, {
-      availableShares: newAvailableShares,
       price: team.price + priceIncrease,
     });
 
@@ -242,11 +252,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPrizePool(): Promise<number> {
-    const allTeams = await this.getTeams();
-    return allTeams.reduce((acc, team) => {
-      const soldShares = team.totalShares - team.availableShares;
-      return acc + soldShares * team.price;
-    }, 0);
+    // Calculate prize pool from all buy transactions
+    const allTransactions = await db.select().from(transactions).where(eq(transactions.type, "buy"));
+    return allTransactions.reduce((acc, tx) => acc + tx.totalAmount, 0);
   }
 
   // Deposits

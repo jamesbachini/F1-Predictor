@@ -67,6 +67,21 @@ export async function registerRoutes(
     }
   });
 
+  // Get shares sold by team
+  app.get("/api/market/shares-by-team", async (req, res) => {
+    try {
+      const sharesByTeam = await storage.getSharesSoldByTeam();
+      // Convert Map to object for JSON response
+      const result: Record<string, number> = {};
+      sharesByTeam.forEach((value, key) => {
+        result[key] = value;
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch shares by team" });
+    }
+  });
+
   // ============ User Routes ============
 
   // Create or get guest user (simplified auth for demo)

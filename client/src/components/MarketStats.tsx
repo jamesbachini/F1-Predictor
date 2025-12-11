@@ -1,15 +1,21 @@
 import { Trophy, Users, TrendingUp, Clock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useMarket } from "@/context/MarketContext";
+import { useQuery } from "@tanstack/react-query";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 
 export function MarketStats() {
   const { teams, prizePool } = useMarket();
 
+  const { data: sharesByTeam = {} } = useQuery<Record<string, number>>({
+    queryKey: ["/api/market/shares-by-team"],
+    refetchInterval: 10000,
+  });
+
   const chartData = teams
     .map((team) => ({
       name: team.shortName,
-      value: team.totalShares - team.availableShares,
+      value: sharesByTeam[team.id] || 0,
       color: team.color,
     }))
     .filter((d) => d.value > 0)

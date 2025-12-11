@@ -70,9 +70,6 @@ export function TeamCard({ team, onBuy, owned }: TeamCardProps) {
           </Button>
         </div>
 
-        <div className="text-xs text-muted-foreground">
-          {team.availableShares.toLocaleString()} / {team.totalShares.toLocaleString()} shares available
-        </div>
       </CardContent>
     </Card>
   );

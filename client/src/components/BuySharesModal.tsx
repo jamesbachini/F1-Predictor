@@ -27,8 +27,7 @@ export function BuySharesModal({ team, open, onOpenChange }: BuySharesModalProps
 
   const totalCost = team.price * quantity;
   const canAfford = totalCost <= balance;
-  const hasShares = quantity <= team.availableShares;
-  const canBuy = canAfford && hasShares && quantity > 0;
+  const canBuy = canAfford && quantity > 0;
 
   const handleBuy = async () => {
     if (!canBuy) return;
@@ -55,8 +54,7 @@ export function BuySharesModal({ team, open, onOpenChange }: BuySharesModalProps
     setQuantity(1);
   };
 
-  const maxAffordable = Math.floor(balance / team.price);
-  const maxQuantity = Math.min(maxAffordable, team.availableShares);
+  const maxQuantity = Math.floor(balance / team.price);
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -79,13 +77,6 @@ export function BuySharesModal({ team, open, onOpenChange }: BuySharesModalProps
             <span className="text-muted-foreground">Current Price</span>
             <span className="text-xl font-bold tabular-nums" data-testid="text-modal-price">
               ${team.price.toFixed(2)}
-            </span>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">Available</span>
-            <span className="tabular-nums">
-              {team.availableShares.toLocaleString()} shares
             </span>
           </div>
 
