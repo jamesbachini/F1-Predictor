@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,8 +8,9 @@ import { useMarket } from "@/context/MarketContext";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
-import { Copy, ExternalLink, Wallet, DollarSign, AlertCircle } from "lucide-react";
+import { Copy, ExternalLink, Wallet, DollarSign, AlertCircle, Link2, Loader2 } from "lucide-react";
 import { SiStellar } from "react-icons/si";
+import { isConnected, requestAccess, getAddress } from "@stellar/freighter-api";
 
 interface DepositModalProps {
   open: boolean;
@@ -28,11 +29,62 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
   const { userId, refetch } = useMarket();
   const { toast } = useToast();
   const [demoAmount, setDemoAmount] = useState("50");
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [isFreighterInstalled, setIsFreighterInstalled] = useState<boolean | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
   
   const { data: depositInfo } = useQuery<DepositInfo>({
     queryKey: ["/api/users", userId, "deposit-info"],
     enabled: !!userId && open,
   });
+
+  useEffect(() => {
+    const checkFreighter = async () => {
+      try {
+        const result = await isConnected();
+        setIsFreighterInstalled(result.isConnected);
+        if (result.isConnected) {
+          const addressResult = await getAddress();
+          if (addressResult.address) {
+            setWalletAddress(addressResult.address);
+          }
+        }
+      } catch (e) {
+        setIsFreighterInstalled(false);
+      }
+    };
+    if (open) {
+      checkFreighter();
+    }
+  }, [open]);
+
+  const connectFreighter = async () => {
+    setIsConnecting(true);
+    try {
+      const accessResult = await requestAccess();
+      if (accessResult.error) {
+        toast({
+          title: "Connection Failed",
+          description: accessResult.error,
+          variant: "destructive",
+        });
+      } else if (accessResult.address) {
+        setWalletAddress(accessResult.address);
+        toast({
+          title: "Wallet Connected",
+          description: `Connected to ${accessResult.address.slice(0, 8)}...${accessResult.address.slice(-4)}`,
+        });
+      }
+    } catch (e) {
+      toast({
+        title: "Error",
+        description: "Failed to connect to Freighter wallet",
+        variant: "destructive",
+      });
+    } finally {
+      setIsConnecting(false);
+    }
+  };
 
   const addDemoCredits = useMutation({
     mutationFn: async (amount: number) => {
@@ -101,13 +153,68 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
 
         <div className="space-y-6">
           <div className="rounded-md bg-muted p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <SiStellar className="h-5 w-5 text-foreground" />
-              <span className="font-medium">Stellar USDC Deposit</span>
-              <Badge variant="outline">
-                {depositInfo?.network || "testnet"}
-              </Badge>
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <div className="flex items-center gap-2">
+                <SiStellar className="h-5 w-5 text-foreground" />
+                <span className="font-medium">Stellar USDC Deposit</span>
+                <Badge variant="outline">
+                  {depositInfo?.network || "testnet"}
+                </Badge>
+              </div>
+              {walletAddress && (
+                <Badge variant="secondary" className="font-mono text-xs">
+                  {walletAddress.slice(0, 4)}...{walletAddress.slice(-4)}
+                </Badge>
+              )}
             </div>
+
+            {isFreighterInstalled === false && (
+              <div className="mb-4 p-3 rounded-md bg-background border">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
+                  <div className="text-sm">
+                    <p className="font-medium">Freighter Wallet Not Detected</p>
+                    <p className="text-muted-foreground mt-1">
+                      Install the Freighter browser extension to connect your Stellar wallet.
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-2"
+                      onClick={() => window.open("https://freighter.app", "_blank")}
+                      data-testid="button-install-freighter"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5 mr-2" />
+                      Get Freighter
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {isFreighterInstalled && !walletAddress && (
+              <div className="mb-4">
+                <Button
+                  onClick={connectFreighter}
+                  disabled={isConnecting}
+                  className="w-full"
+                  variant="outline"
+                  data-testid="button-connect-wallet"
+                >
+                  {isConnecting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Connecting...
+                    </>
+                  ) : (
+                    <>
+                      <Link2 className="h-4 w-4 mr-2" />
+                      Connect Freighter Wallet
+                    </>
+                  )}
+                </Button>
+              </div>
+            )}
             
             {depositInfo?.depositAddress ? (
               <div className="space-y-3">

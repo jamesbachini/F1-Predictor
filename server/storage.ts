@@ -46,18 +46,19 @@ export interface IStorage {
   confirmDeposit(depositId: string): Promise<Deposit | undefined>;
 }
 
-// Initial F1 2026 teams data
+// Initial F1 2026 teams data - all teams start at equal $0.10 price
 const initialTeams: InsertTeam[] = [
-  { id: "redbull", name: "Red Bull Racing", shortName: "RBR", color: "#1E41FF", price: 0.42, priceChange: 5.2, totalShares: 10000, availableShares: 10000 },
-  { id: "ferrari", name: "Scuderia Ferrari", shortName: "FER", color: "#DC0000", price: 0.38, priceChange: 3.1, totalShares: 10000, availableShares: 10000 },
-  { id: "mercedes", name: "Mercedes-AMG", shortName: "MER", color: "#00D2BE", price: 0.35, priceChange: -1.2, totalShares: 10000, availableShares: 10000 },
-  { id: "mclaren", name: "McLaren F1", shortName: "MCL", color: "#FF8700", price: 0.31, priceChange: 8.4, totalShares: 10000, availableShares: 10000 },
-  { id: "astonmartin", name: "Aston Martin", shortName: "AMR", color: "#006F62", price: 0.18, priceChange: -2.8, totalShares: 10000, availableShares: 10000 },
-  { id: "alpine", name: "Alpine F1", shortName: "ALP", color: "#0090FF", price: 0.12, priceChange: 1.5, totalShares: 10000, availableShares: 10000 },
-  { id: "williams", name: "Williams Racing", shortName: "WIL", color: "#005AFF", price: 0.08, priceChange: 4.2, totalShares: 10000, availableShares: 10000 },
-  { id: "rb", name: "RB Formula One", shortName: "RB", color: "#2B4562", price: 0.07, priceChange: -0.5, totalShares: 10000, availableShares: 10000 },
-  { id: "sauber", name: "Stake F1 Team", shortName: "SAU", color: "#52E252", price: 0.05, priceChange: 2.1, totalShares: 10000, availableShares: 10000 },
-  { id: "haas", name: "Haas F1 Team", shortName: "HAS", color: "#B6BABD", price: 0.04, priceChange: -1.8, totalShares: 10000, availableShares: 10000 },
+  { id: "redbull", name: "Red Bull Racing", shortName: "RBR", color: "#1E41FF", price: 0.10, priceChange: 0, totalShares: 10000, availableShares: 10000 },
+  { id: "ferrari", name: "Scuderia Ferrari", shortName: "FER", color: "#DC0000", price: 0.10, priceChange: 0, totalShares: 10000, availableShares: 10000 },
+  { id: "mercedes", name: "Mercedes-AMG", shortName: "MER", color: "#00D2BE", price: 0.10, priceChange: 0, totalShares: 10000, availableShares: 10000 },
+  { id: "mclaren", name: "McLaren F1", shortName: "MCL", color: "#FF8700", price: 0.10, priceChange: 0, totalShares: 10000, availableShares: 10000 },
+  { id: "astonmartin", name: "Aston Martin", shortName: "AMR", color: "#006F62", price: 0.10, priceChange: 0, totalShares: 10000, availableShares: 10000 },
+  { id: "alpine", name: "Alpine F1", shortName: "ALP", color: "#0090FF", price: 0.10, priceChange: 0, totalShares: 10000, availableShares: 10000 },
+  { id: "williams", name: "Williams Racing", shortName: "WIL", color: "#005AFF", price: 0.10, priceChange: 0, totalShares: 10000, availableShares: 10000 },
+  { id: "rb", name: "RB Formula One", shortName: "RB", color: "#2B4562", price: 0.10, priceChange: 0, totalShares: 10000, availableShares: 10000 },
+  { id: "audi", name: "Audi F1 Team", shortName: "AUD", color: "#FF0000", price: 0.10, priceChange: 0, totalShares: 10000, availableShares: 10000 },
+  { id: "haas", name: "Haas F1 Team", shortName: "HAS", color: "#B6BABD", price: 0.10, priceChange: 0, totalShares: 10000, availableShares: 10000 },
+  { id: "cadillac", name: "Cadillac F1 Team", shortName: "CAD", color: "#C4A747", price: 0.10, priceChange: 0, totalShares: 10000, availableShares: 10000 },
 ];
 
 export class DatabaseStorage implements IStorage {

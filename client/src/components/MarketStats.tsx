@@ -79,7 +79,7 @@ export function MarketStats() {
               </CardHeader>
               <CardContent>
                 <div className="text-3xl font-bold tabular-nums" data-testid="text-stats-active-teams">
-                  {activeTeams} / 10
+                  {activeTeams} / {teams.length}
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Teams with shares purchased

@@ -31,7 +31,10 @@ Preferred communication style: Simple, everyday language.
 
 ### Key Data Models
 - **Users**: Account with balance (starts at $100)
-- **Teams**: 10 F1 teams with dynamic pricing, share availability
+- **Teams**: 11 F1 teams for 2026 season (Red Bull, Ferrari, Mercedes, McLaren, Aston Martin, Alpine, Williams, RB, Audi, Haas, Cadillac)
+  - All teams start at equal $0.10 price - market demand drives pricing
+  - Sauber removed (replaced by Audi), Cadillac added as new entry
+  - No share limit - unlimited shares can be purchased
 - **Holdings**: User ownership of team shares with average purchase price
 - **Transactions**: Record of all buy/sell activity
 
@@ -52,6 +55,13 @@ Preferred communication style: Simple, everyday language.
 - Radix UI (full primitive suite for accessible components)
 - Recharts (for market statistics visualization)
 - Embla Carousel, react-day-picker, input-otp, vaul (drawer), react-resizable-panels
+
+### Stellar/USDC Integration
+- @stellar/stellar-sdk for Stellar network operations
+- @stellar/freighter-api for web wallet integration
+- STELLAR_SECRET_KEY environment variable for testnet master wallet
+- Memo-based deposit tracking using user UUID (first 28 characters)
+- Demo credits with $5000 lifetime limit per user for testing
 
 ### Development Tools
 - Replit-specific plugins: vite-plugin-runtime-error-modal, vite-plugin-cartographer, vite-plugin-dev-banner
