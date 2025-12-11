@@ -1,11 +1,13 @@
 import { 
-  users, teams, holdings, transactions, deposits, priceHistory,
+  users, teams, holdings, transactions, deposits, priceHistory, seasons, payouts,
   type User, type InsertUser, 
   type Team, type InsertTeam,
   type Holding, type InsertHolding,
   type Transaction, type InsertTransaction,
   type Deposit, type InsertDeposit,
   type PriceHistory, type InsertPriceHistory,
+  type Season, type InsertSeason,
+  type Payout, type InsertPayout,
   type BuySharesRequest,
   type SellSharesRequest
 } from "@shared/schema";
@@ -54,6 +56,19 @@ export interface IStorage {
   recordPriceSnapshot(teamId: string, price: number): Promise<PriceHistory>;
   getPriceHistory(teamId?: string, limit?: number): Promise<PriceHistory[]>;
   recordAllTeamPrices(): Promise<void>;
+  
+  // Season management
+  getCurrentSeason(): Promise<Season | undefined>;
+  createSeason(season: InsertSeason): Promise<Season>;
+  concludeSeason(seasonId: string, winningTeamId: string, prizePool: number): Promise<Season | undefined>;
+  isSeasonActive(): Promise<boolean>;
+  
+  // Payouts
+  createPayout(payout: InsertPayout): Promise<Payout>;
+  getPayoutsBySeason(seasonId: string): Promise<Payout[]>;
+  getPayoutsByUser(userId: string): Promise<Payout[]>;
+  updatePayoutStatus(payoutId: string, status: string, stellarTxHash?: string): Promise<Payout | undefined>;
+  getHoldersOfTeam(teamId: string): Promise<{ userId: string; shares: number; walletAddress: string | null }[]>;
 }
 
 // Initial F1 2026 teams data - all teams start at equal $0.10 price
@@ -426,6 +441,91 @@ export class DatabaseStorage implements IStorage {
     for (const team of allTeams) {
       await this.recordPriceSnapshot(team.id, team.price);
     }
+  }
+
+  // Season management
+  async getCurrentSeason(): Promise<Season | undefined> {
+    const [season] = await db
+      .select()
+      .from(seasons)
+      .orderBy(desc(seasons.createdAt))
+      .limit(1);
+    return season || undefined;
+  }
+
+  async createSeason(season: InsertSeason): Promise<Season> {
+    const [newSeason] = await db.insert(seasons).values(season).returning();
+    return newSeason;
+  }
+
+  async concludeSeason(seasonId: string, winningTeamId: string, prizePool: number): Promise<Season | undefined> {
+    const [updated] = await db
+      .update(seasons)
+      .set({
+        status: "concluded",
+        winningTeamId,
+        prizePool,
+        concludedAt: new Date(),
+      })
+      .where(eq(seasons.id, seasonId))
+      .returning();
+    return updated || undefined;
+  }
+
+  async isSeasonActive(): Promise<boolean> {
+    const currentSeason = await this.getCurrentSeason();
+    return currentSeason?.status === "active";
+  }
+
+  // Payouts
+  async createPayout(payout: InsertPayout): Promise<Payout> {
+    const [newPayout] = await db.insert(payouts).values(payout).returning();
+    return newPayout;
+  }
+
+  async getPayoutsBySeason(seasonId: string): Promise<Payout[]> {
+    return await db
+      .select()
+      .from(payouts)
+      .where(eq(payouts.seasonId, seasonId))
+      .orderBy(desc(payouts.payoutAmount));
+  }
+
+  async getPayoutsByUser(userId: string): Promise<Payout[]> {
+    return await db
+      .select()
+      .from(payouts)
+      .where(eq(payouts.userId, userId))
+      .orderBy(desc(payouts.createdAt));
+  }
+
+  async updatePayoutStatus(payoutId: string, status: string, stellarTxHash?: string): Promise<Payout | undefined> {
+    const updates: Partial<Payout> = { status };
+    if (stellarTxHash) {
+      updates.stellarTxHash = stellarTxHash;
+    }
+    if (status === "sent") {
+      updates.paidAt = new Date();
+    }
+    const [updated] = await db
+      .update(payouts)
+      .set(updates)
+      .where(eq(payouts.id, payoutId))
+      .returning();
+    return updated || undefined;
+  }
+
+  async getHoldersOfTeam(teamId: string): Promise<{ userId: string; shares: number; walletAddress: string | null }[]> {
+    const result = await db
+      .select({
+        userId: holdings.userId,
+        shares: holdings.shares,
+        walletAddress: users.walletAddress,
+      })
+      .from(holdings)
+      .innerJoin(users, eq(holdings.userId, users.id))
+      .where(and(eq(holdings.teamId, teamId), sql`${holdings.shares} > 0`));
+    return result;
   }
 }
 

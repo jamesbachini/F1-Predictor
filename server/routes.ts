@@ -10,6 +10,7 @@ import {
   hasUSDCTrustline,
   getRecentUSDCPayments,
   generateDepositMemo,
+  sendUSDCPayment,
   USE_TESTNET,
   USDC_ISSUER
 } from "./stellar";
@@ -197,6 +198,13 @@ export async function registerRoutes(
   // Buy shares
   app.post("/api/trade/buy", async (req, res) => {
     try {
+      // Check if season is active (trading locked when concluded)
+      const seasonActive = await storage.isSeasonActive();
+      const currentSeason = await storage.getCurrentSeason();
+      if (currentSeason && !seasonActive) {
+        return res.status(403).json({ error: "Trading is locked. The season has concluded." });
+      }
+
       const parsed = buySharesSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid request", details: parsed.error.errors });
@@ -240,6 +248,13 @@ export async function registerRoutes(
   // Sell shares
   app.post("/api/trade/sell", async (req, res) => {
     try {
+      // Check if season is active (trading locked when concluded)
+      const seasonActive = await storage.isSeasonActive();
+      const currentSeason = await storage.getCurrentSeason();
+      if (currentSeason && !seasonActive) {
+        return res.status(403).json({ error: "Trading is locked. The season has concluded." });
+      }
+
       const parsed = sellSharesSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid request", details: parsed.error.errors });
@@ -356,6 +371,244 @@ export async function registerRoutes(
       res.json(deposits);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch deposits" });
+    }
+  });
+
+  // ============ Season Management Routes ============
+
+  // Get current season status
+  app.get("/api/season", async (req, res) => {
+    try {
+      const season = await storage.getCurrentSeason();
+      if (!season) {
+        return res.json({ exists: false, status: "no_season" });
+      }
+      res.json({ exists: true, ...season });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch season" });
+    }
+  });
+
+  // Create a new season (admin)
+  app.post("/api/admin/season/create", async (req, res) => {
+    try {
+      const { year } = req.body;
+      if (!year || typeof year !== "number") {
+        return res.status(400).json({ error: "Year is required" });
+      }
+
+      // Check if there's already an active season
+      const currentSeason = await storage.getCurrentSeason();
+      if (currentSeason && currentSeason.status === "active") {
+        return res.status(400).json({ error: "There is already an active season" });
+      }
+
+      const season = await storage.createSeason({ year, status: "active" });
+      res.json(season);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create season" });
+    }
+  });
+
+  // Close season and declare winner (admin)
+  app.post("/api/admin/season/conclude", async (req, res) => {
+    try {
+      const { winningTeamId } = req.body;
+      if (!winningTeamId) {
+        return res.status(400).json({ error: "Winning team ID is required" });
+      }
+
+      // Get current season
+      const currentSeason = await storage.getCurrentSeason();
+      if (!currentSeason) {
+        return res.status(400).json({ error: "No active season found" });
+      }
+      if (currentSeason.status !== "active") {
+        return res.status(400).json({ error: "Season is already concluded" });
+      }
+
+      // Verify the team exists
+      const winningTeam = await storage.getTeam(winningTeamId);
+      if (!winningTeam) {
+        return res.status(404).json({ error: "Team not found" });
+      }
+
+      // Get current prize pool
+      const prizePool = await storage.getPrizePool();
+
+      // Conclude the season
+      const updatedSeason = await storage.concludeSeason(
+        currentSeason.id,
+        winningTeamId,
+        prizePool
+      );
+
+      res.json({ 
+        success: true, 
+        season: updatedSeason,
+        winningTeam,
+        prizePool 
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to conclude season" });
+    }
+  });
+
+  // Calculate and create payout records (admin)
+  app.post("/api/admin/season/calculate-payouts", async (req, res) => {
+    try {
+      // Get current season
+      const currentSeason = await storage.getCurrentSeason();
+      if (!currentSeason) {
+        return res.status(400).json({ error: "No season found" });
+      }
+      if (currentSeason.status !== "concluded") {
+        return res.status(400).json({ error: "Season must be concluded before calculating payouts" });
+      }
+      if (!currentSeason.winningTeamId) {
+        return res.status(400).json({ error: "No winning team declared" });
+      }
+
+      // Check if payouts already exist
+      const existingPayouts = await storage.getPayoutsBySeason(currentSeason.id);
+      if (existingPayouts.length > 0) {
+        return res.status(400).json({ error: "Payouts already calculated", payouts: existingPayouts });
+      }
+
+      // Get all holders of the winning team
+      const holders = await storage.getHoldersOfTeam(currentSeason.winningTeamId);
+      if (holders.length === 0) {
+        return res.json({ success: true, message: "No holders of winning team", payouts: [] });
+      }
+
+      // Calculate total shares held
+      const totalShares = holders.reduce((sum, h) => sum + h.shares, 0);
+
+      // Create payout records for each holder
+      const payouts = [];
+      for (const holder of holders) {
+        const sharePercentage = holder.shares / totalShares;
+        const payoutAmount = currentSeason.prizePool * sharePercentage;
+
+        const payout = await storage.createPayout({
+          seasonId: currentSeason.id,
+          userId: holder.userId,
+          teamId: currentSeason.winningTeamId,
+          sharesHeld: holder.shares,
+          sharePercentage,
+          payoutAmount,
+          status: "pending",
+        });
+        payouts.push({ ...payout, walletAddress: holder.walletAddress });
+      }
+
+      res.json({ 
+        success: true, 
+        totalShares,
+        prizePool: currentSeason.prizePool,
+        payouts 
+      });
+    } catch (error) {
+      console.error("Error calculating payouts:", error);
+      res.status(500).json({ error: "Failed to calculate payouts" });
+    }
+  });
+
+  // Get payouts for a season
+  app.get("/api/admin/season/:seasonId/payouts", async (req, res) => {
+    try {
+      const payouts = await storage.getPayoutsBySeason(req.params.seasonId);
+      res.json(payouts);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch payouts" });
+    }
+  });
+
+  // Get user's payouts
+  app.get("/api/users/:userId/payouts", async (req, res) => {
+    try {
+      const payouts = await storage.getPayoutsByUser(req.params.userId);
+      res.json(payouts);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch user payouts" });
+    }
+  });
+
+  // Distribute payouts - send USDC to winners (admin)
+  app.post("/api/admin/season/distribute-payouts", async (req, res) => {
+    try {
+      // Get current season
+      const currentSeason = await storage.getCurrentSeason();
+      if (!currentSeason) {
+        return res.status(400).json({ error: "No season found" });
+      }
+      if (currentSeason.status !== "concluded") {
+        return res.status(400).json({ error: "Season must be concluded before distributing payouts" });
+      }
+
+      // Get pending payouts
+      const allPayouts = await storage.getPayoutsBySeason(currentSeason.id);
+      const pendingPayouts = allPayouts.filter(p => p.status === "pending");
+
+      if (pendingPayouts.length === 0) {
+        return res.json({ success: true, message: "No pending payouts to distribute", results: [] });
+      }
+
+      // Process each payout
+      const results = [];
+      for (const payout of pendingPayouts) {
+        // Get user's wallet address
+        const user = await storage.getUser(payout.userId);
+        if (!user || !user.walletAddress) {
+          results.push({
+            payoutId: payout.id,
+            userId: payout.userId,
+            success: false,
+            error: "User has no linked wallet",
+          });
+          await storage.updatePayoutStatus(payout.id, "failed");
+          continue;
+        }
+
+        // Send USDC payment
+        const transferResult = await sendUSDCPayment(
+          user.walletAddress,
+          payout.payoutAmount.toFixed(7),
+          `F1 Predict Payout`
+        );
+
+        if (transferResult.success) {
+          await storage.updatePayoutStatus(payout.id, "sent", transferResult.transactionHash);
+          results.push({
+            payoutId: payout.id,
+            userId: payout.userId,
+            walletAddress: user.walletAddress,
+            amount: payout.payoutAmount,
+            success: true,
+            transactionHash: transferResult.transactionHash,
+          });
+        } else {
+          await storage.updatePayoutStatus(payout.id, "failed");
+          results.push({
+            payoutId: payout.id,
+            userId: payout.userId,
+            success: false,
+            error: transferResult.error,
+          });
+        }
+      }
+
+      const successCount = results.filter(r => r.success).length;
+      const failCount = results.filter(r => !r.success).length;
+
+      res.json({
+        success: true,
+        message: `Processed ${results.length} payouts: ${successCount} successful, ${failCount} failed`,
+        results,
+      });
+    } catch (error) {
+      console.error("Error distributing payouts:", error);
+      res.status(500).json({ error: "Failed to distribute payouts" });
     }
   });
 

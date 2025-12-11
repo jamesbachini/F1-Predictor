@@ -1,4 +1,4 @@
-import { TrendingUp, TrendingDown, ShoppingCart } from "lucide-react";
+import { TrendingUp, TrendingDown, ShoppingCart, Lock } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -8,9 +8,10 @@ interface TeamCardProps {
   team: F1Team;
   onBuy?: (team: F1Team) => void;
   owned?: number;
+  tradingLocked?: boolean;
 }
 
-export function TeamCard({ team, onBuy, owned }: TeamCardProps) {
+export function TeamCard({ team, onBuy, owned, tradingLocked }: TeamCardProps) {
   const isPositive = team.priceChange >= 0;
 
   return (
@@ -64,9 +65,23 @@ export function TeamCard({ team, onBuy, owned }: TeamCardProps) {
               </span>
             </div>
           </div>
-          <Button size="sm" onClick={() => onBuy?.(team)} data-testid={`button-buy-${team.id}`}>
-            <ShoppingCart className="mr-1 h-3.5 w-3.5" />
-            Buy
+          <Button 
+            size="sm" 
+            onClick={() => onBuy?.(team)} 
+            disabled={tradingLocked}
+            data-testid={`button-buy-${team.id}`}
+          >
+            {tradingLocked ? (
+              <>
+                <Lock className="mr-1 h-3.5 w-3.5" />
+                Locked
+              </>
+            ) : (
+              <>
+                <ShoppingCart className="mr-1 h-3.5 w-3.5" />
+                Buy
+              </>
+            )}
           </Button>
         </div>
 

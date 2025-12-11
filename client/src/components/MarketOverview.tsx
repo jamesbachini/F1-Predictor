@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { TeamCard } from "./TeamCard";
 import { useMarket, type F1Team } from "@/context/MarketContext";
 
@@ -5,9 +6,19 @@ interface MarketOverviewProps {
   onBuyTeam?: (team: F1Team) => void;
 }
 
+interface SeasonResponse {
+  exists: boolean;
+  status?: string;
+}
+
 export function MarketOverview({ onBuyTeam }: MarketOverviewProps) {
   const { teams, getHolding } = useMarket();
 
+  const { data: season } = useQuery<SeasonResponse>({
+    queryKey: ["/api/season"],
+  });
+
+  const isTradingLocked = season?.exists && season.status === "concluded";
   const sortedTeams = [...teams].sort((a, b) => b.price - a.price);
 
   return (
@@ -29,6 +40,7 @@ export function MarketOverview({ onBuyTeam }: MarketOverviewProps) {
               team={team}
               onBuy={onBuyTeam}
               owned={getHolding(team.id)?.shares}
+              tradingLocked={isTradingLocked}
             />
           ))}
         </div>

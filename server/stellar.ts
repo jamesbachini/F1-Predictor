@@ -113,6 +113,80 @@ export function generateDepositMemo(userId: string): string {
   return userId.slice(0, 28);
 }
 
+export interface TransferResult {
+  success: boolean;
+  transactionHash?: string;
+  error?: string;
+}
+
+export async function sendUSDCPayment(
+  destinationAddress: string,
+  amount: string,
+  memo?: string
+): Promise<TransferResult> {
+  try {
+    const secretKey = process.env.STELLAR_SECRET_KEY;
+    if (!secretKey) {
+      return { success: false, error: "Master wallet not configured" };
+    }
+
+    const sourceKeypair = Stellar.Keypair.fromSecret(secretKey);
+    const sourcePublicKey = sourceKeypair.publicKey();
+
+    // Load source account
+    const sourceAccount = await server.loadAccount(sourcePublicKey);
+
+    // Verify destination exists and has USDC trustline
+    const destExists = await accountExists(destinationAddress);
+    if (!destExists) {
+      return { success: false, error: "Destination account does not exist" };
+    }
+
+    const hasTrustline = await hasUSDCTrustline(destinationAddress);
+    if (!hasTrustline) {
+      return { success: false, error: "Destination account does not have USDC trustline" };
+    }
+
+    // Build the transaction
+    let transactionBuilder = new Stellar.TransactionBuilder(sourceAccount, {
+      fee: "100000",
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(
+        Stellar.Operation.payment({
+          destination: destinationAddress,
+          asset: USDC_ASSET,
+          amount: amount,
+        })
+      )
+      .setTimeout(180);
+
+    // Add memo if provided
+    if (memo) {
+      transactionBuilder = transactionBuilder.addMemo(Stellar.Memo.text(memo.slice(0, 28)));
+    }
+
+    const transaction = transactionBuilder.build();
+
+    // Sign the transaction
+    transaction.sign(sourceKeypair);
+
+    // Submit to the network
+    const result = await server.submitTransaction(transaction);
+    
+    return { 
+      success: true, 
+      transactionHash: result.hash 
+    };
+  } catch (error: any) {
+    console.error("USDC payment error:", error);
+    return { 
+      success: false, 
+      error: error.message || "Failed to send USDC payment" 
+    };
+  }
+}
+
 export {
   USDC_ASSET,
   USDC_ISSUER,

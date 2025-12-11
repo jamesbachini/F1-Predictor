@@ -87,6 +87,54 @@ export const priceHistory = pgTable("price_history", {
   recordedAt: timestamp("recorded_at").notNull().defaultNow(),
 });
 
+// Season - tracks the current season state
+export const seasons = pgTable("seasons", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  year: integer("year").notNull().unique(),
+  status: text("status").notNull().default("active"), // 'active', 'concluded'
+  winningTeamId: varchar("winning_team_id").references(() => teams.id),
+  prizePool: real("prize_pool").notNull().default(0),
+  concludedAt: timestamp("concluded_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const seasonsRelations = relations(seasons, ({ one }) => ({
+  winningTeam: one(teams, {
+    fields: [seasons.winningTeamId],
+    references: [teams.id],
+  }),
+}));
+
+// Payouts - records prize distributions to winners
+export const payouts = pgTable("payouts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  seasonId: varchar("season_id").notNull().references(() => seasons.id),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  teamId: varchar("team_id").notNull().references(() => teams.id),
+  sharesHeld: integer("shares_held").notNull(),
+  sharePercentage: real("share_percentage").notNull(),
+  payoutAmount: real("payout_amount").notNull(),
+  stellarTxHash: text("stellar_tx_hash"),
+  status: text("status").notNull().default("pending"), // 'pending', 'sent', 'failed'
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  paidAt: timestamp("paid_at"),
+});
+
+export const payoutsRelations = relations(payouts, ({ one }) => ({
+  season: one(seasons, {
+    fields: [payouts.seasonId],
+    references: [seasons.id],
+  }),
+  user: one(users, {
+    fields: [payouts.userId],
+    references: [users.id],
+  }),
+  team: one(teams, {
+    fields: [payouts.teamId],
+    references: [teams.id],
+  }),
+}));
+
 export const depositsRelations = relations(deposits, ({ one }) => ({
   user: one(users, {
     fields: [deposits.userId],
@@ -140,6 +188,18 @@ export const insertPriceHistorySchema = createInsertSchema(priceHistory).omit({
   recordedAt: true,
 });
 
+export const insertSeasonSchema = createInsertSchema(seasons).omit({
+  id: true,
+  createdAt: true,
+  concludedAt: true,
+});
+
+export const insertPayoutSchema = createInsertSchema(payouts).omit({
+  id: true,
+  createdAt: true,
+  paidAt: true,
+});
+
 // Buy shares request schema
 export const buySharesSchema = z.object({
   teamId: z.string(),
@@ -178,3 +238,7 @@ export type Deposit = typeof deposits.$inferSelect;
 export type DepositRequest = z.infer<typeof depositRequestSchema>;
 export type InsertPriceHistory = z.infer<typeof insertPriceHistorySchema>;
 export type PriceHistory = typeof priceHistory.$inferSelect;
+export type InsertSeason = z.infer<typeof insertSeasonSchema>;
+export type Season = typeof seasons.$inferSelect;
+export type InsertPayout = z.infer<typeof insertPayoutSchema>;
+export type Payout = typeof payouts.$inferSelect;

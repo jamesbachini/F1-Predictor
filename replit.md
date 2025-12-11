@@ -30,7 +30,7 @@ Preferred communication style: Simple, everyday language.
 - **Migrations**: Drizzle Kit with `db:push` command
 
 ### Key Data Models
-- **Users**: Account with balance (starts at $100), optional walletAddress for Freighter wallet linking
+- **Users**: Account with balance (deprecated - using wallet USDC), optional walletAddress for Freighter wallet linking
 - **Teams**: 11 F1 teams for 2026 season (Red Bull, Ferrari, Mercedes, McLaren, Aston Martin, Alpine, Williams, RB, Audi, Haas, Cadillac)
   - All teams start at equal $0.10 price - market demand drives pricing
   - Sauber removed (replaced by Audi), Cadillac added as new entry
@@ -38,6 +38,8 @@ Preferred communication style: Simple, everyday language.
 - **Holdings**: User ownership of team shares with average purchase price
 - **Transactions**: Record of all buy/sell activity
 - **PriceHistory**: Team price snapshots recorded on trades and seeded on startup for charts
+- **Seasons**: Tracks season state (active/concluded), winning team, prize pool
+- **Payouts**: Records prize distributions to winning team shareholders
 
 ### Application Flow
 1. Guest users are auto-created on first visit (stored in localStorage)
@@ -48,6 +50,15 @@ Preferred communication style: Simple, everyday language.
 6. Portfolio tracks holdings, P&L, and total value
 7. Prize pool accumulates from all share purchases
 8. TeamValueChart displays price history over time
+
+### Season Conclusion Flow (Admin)
+1. Create season via Admin Panel (2026 season)
+2. Users trade during active season
+3. Admin concludes season and declares winning team
+4. Trading is locked when season concludes
+5. Admin calculates payouts (distributes prize pool by share percentage)
+6. Admin distributes payouts - USDC sent to winners' Stellar wallets
+7. Winners receive USDC proportional to their shareholding in the winning team
 
 ## External Dependencies
 
