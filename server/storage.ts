@@ -1,38 +1,246 @@
-import { type User, type InsertUser } from "@shared/schema";
-import { randomUUID } from "crypto";
-
-// modify the interface with any CRUD methods
-// you might need
+import { 
+  users, teams, holdings, transactions,
+  type User, type InsertUser, 
+  type Team, type InsertTeam,
+  type Holding, type InsertHolding,
+  type Transaction, type InsertTransaction,
+  type BuySharesRequest
+} from "@shared/schema";
+import { db } from "./db";
+import { eq, and, desc, sql } from "drizzle-orm";
 
 export interface IStorage {
+  // Users
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
+  updateUserBalance(id: string, newBalance: number): Promise<User | undefined>;
+  
+  // Teams
+  getTeams(): Promise<Team[]>;
+  getTeam(id: string): Promise<Team | undefined>;
+  createTeam(team: InsertTeam): Promise<Team>;
+  updateTeam(id: string, updates: Partial<Team>): Promise<Team | undefined>;
+  seedTeams(): Promise<void>;
+  
+  // Holdings
+  getHoldingsByUser(userId: string): Promise<Holding[]>;
+  getHolding(userId: string, teamId: string): Promise<Holding | undefined>;
+  upsertHolding(holding: InsertHolding): Promise<Holding>;
+  
+  // Transactions
+  getTransactionsByUser(userId: string): Promise<Transaction[]>;
+  createTransaction(transaction: InsertTransaction): Promise<Transaction>;
+  getRecentTransactions(limit: number): Promise<Transaction[]>;
+  
+  // Market operations
+  buyShares(request: BuySharesRequest): Promise<{ success: boolean; error?: string; transaction?: Transaction }>;
+  getPrizePool(): Promise<number>;
 }
 
-export class MemStorage implements IStorage {
-  private users: Map<string, User>;
+// Initial F1 2026 teams data
+const initialTeams: InsertTeam[] = [
+  { id: "redbull", name: "Red Bull Racing", shortName: "RBR", color: "#1E41FF", price: 0.42, priceChange: 5.2, totalShares: 10000, availableShares: 10000 },
+  { id: "ferrari", name: "Scuderia Ferrari", shortName: "FER", color: "#DC0000", price: 0.38, priceChange: 3.1, totalShares: 10000, availableShares: 10000 },
+  { id: "mercedes", name: "Mercedes-AMG", shortName: "MER", color: "#00D2BE", price: 0.35, priceChange: -1.2, totalShares: 10000, availableShares: 10000 },
+  { id: "mclaren", name: "McLaren F1", shortName: "MCL", color: "#FF8700", price: 0.31, priceChange: 8.4, totalShares: 10000, availableShares: 10000 },
+  { id: "astonmartin", name: "Aston Martin", shortName: "AMR", color: "#006F62", price: 0.18, priceChange: -2.8, totalShares: 10000, availableShares: 10000 },
+  { id: "alpine", name: "Alpine F1", shortName: "ALP", color: "#0090FF", price: 0.12, priceChange: 1.5, totalShares: 10000, availableShares: 10000 },
+  { id: "williams", name: "Williams Racing", shortName: "WIL", color: "#005AFF", price: 0.08, priceChange: 4.2, totalShares: 10000, availableShares: 10000 },
+  { id: "rb", name: "RB Formula One", shortName: "RB", color: "#2B4562", price: 0.07, priceChange: -0.5, totalShares: 10000, availableShares: 10000 },
+  { id: "sauber", name: "Stake F1 Team", shortName: "SAU", color: "#52E252", price: 0.05, priceChange: 2.1, totalShares: 10000, availableShares: 10000 },
+  { id: "haas", name: "Haas F1 Team", shortName: "HAS", color: "#B6BABD", price: 0.04, priceChange: -1.8, totalShares: 10000, availableShares: 10000 },
+];
 
-  constructor() {
-    this.users = new Map();
-  }
-
+export class DatabaseStorage implements IStorage {
+  // Users
   async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user || undefined;
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
+    const [user] = await db.select().from(users).where(eq(users.username, username));
+    return user || undefined;
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
-    const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
+    const [user] = await db.insert(users).values(insertUser).returning();
     return user;
+  }
+
+  async updateUserBalance(id: string, newBalance: number): Promise<User | undefined> {
+    const [user] = await db
+      .update(users)
+      .set({ balance: newBalance })
+      .where(eq(users.id, id))
+      .returning();
+    return user || undefined;
+  }
+
+  // Teams
+  async getTeams(): Promise<Team[]> {
+    return await db.select().from(teams);
+  }
+
+  async getTeam(id: string): Promise<Team | undefined> {
+    const [team] = await db.select().from(teams).where(eq(teams.id, id));
+    return team || undefined;
+  }
+
+  async createTeam(team: InsertTeam): Promise<Team> {
+    const [newTeam] = await db.insert(teams).values(team as any).returning();
+    return newTeam;
+  }
+
+  async updateTeam(id: string, updates: Partial<Team>): Promise<Team | undefined> {
+    const [team] = await db
+      .update(teams)
+      .set(updates)
+      .where(eq(teams.id, id))
+      .returning();
+    return team || undefined;
+  }
+
+  async seedTeams(): Promise<void> {
+    const existingTeams = await this.getTeams();
+    if (existingTeams.length === 0) {
+      for (const team of initialTeams) {
+        await this.createTeam(team);
+      }
+    }
+  }
+
+  // Holdings
+  async getHoldingsByUser(userId: string): Promise<Holding[]> {
+    return await db.select().from(holdings).where(eq(holdings.userId, userId));
+  }
+
+  async getHolding(userId: string, teamId: string): Promise<Holding | undefined> {
+    const [holding] = await db
+      .select()
+      .from(holdings)
+      .where(and(eq(holdings.userId, userId), eq(holdings.teamId, teamId)));
+    return holding || undefined;
+  }
+
+  async upsertHolding(holding: InsertHolding): Promise<Holding> {
+    const existing = await this.getHolding(holding.userId, holding.teamId);
+    if (existing) {
+      const [updated] = await db
+        .update(holdings)
+        .set({ shares: holding.shares, avgPrice: holding.avgPrice })
+        .where(eq(holdings.id, existing.id))
+        .returning();
+      return updated;
+    } else {
+      const [newHolding] = await db.insert(holdings).values(holding).returning();
+      return newHolding;
+    }
+  }
+
+  // Transactions
+  async getTransactionsByUser(userId: string): Promise<Transaction[]> {
+    return await db
+      .select()
+      .from(transactions)
+      .where(eq(transactions.userId, userId))
+      .orderBy(desc(transactions.createdAt));
+  }
+
+  async createTransaction(transaction: InsertTransaction): Promise<Transaction> {
+    const [newTransaction] = await db.insert(transactions).values(transaction).returning();
+    return newTransaction;
+  }
+
+  async getRecentTransactions(limit: number): Promise<Transaction[]> {
+    return await db
+      .select()
+      .from(transactions)
+      .orderBy(desc(transactions.createdAt))
+      .limit(limit);
+  }
+
+  // Market operations
+  async buyShares(request: BuySharesRequest): Promise<{ success: boolean; error?: string; transaction?: Transaction }> {
+    const { teamId, quantity, userId } = request;
+
+    // Get user and team
+    const user = await this.getUser(userId);
+    if (!user) {
+      return { success: false, error: "User not found" };
+    }
+
+    const team = await this.getTeam(teamId);
+    if (!team) {
+      return { success: false, error: "Team not found" };
+    }
+
+    // Calculate cost
+    const totalCost = team.price * quantity;
+
+    // Check balance
+    if (user.balance < totalCost) {
+      return { success: false, error: "Insufficient balance" };
+    }
+
+    // Check available shares
+    if (team.availableShares < quantity) {
+      return { success: false, error: "Not enough shares available" };
+    }
+
+    // Update user balance
+    await this.updateUserBalance(userId, user.balance - totalCost);
+
+    // Update team available shares and price (slight increase on demand)
+    const newAvailableShares = team.availableShares - quantity;
+    const priceIncrease = (quantity / team.totalShares) * 0.01; // Small price increase based on demand
+    await this.updateTeam(teamId, {
+      availableShares: newAvailableShares,
+      price: team.price + priceIncrease,
+    });
+
+    // Update or create holding
+    const existingHolding = await this.getHolding(userId, teamId);
+    if (existingHolding) {
+      const newShares = existingHolding.shares + quantity;
+      const newAvgPrice = 
+        (existingHolding.shares * existingHolding.avgPrice + quantity * team.price) / newShares;
+      await this.upsertHolding({
+        userId,
+        teamId,
+        shares: newShares,
+        avgPrice: newAvgPrice,
+      });
+    } else {
+      await this.upsertHolding({
+        userId,
+        teamId,
+        shares: quantity,
+        avgPrice: team.price,
+      });
+    }
+
+    // Create transaction record
+    const transaction = await this.createTransaction({
+      userId,
+      teamId,
+      type: "buy",
+      shares: quantity,
+      pricePerShare: team.price,
+      totalAmount: totalCost,
+    });
+
+    return { success: true, transaction };
+  }
+
+  async getPrizePool(): Promise<number> {
+    const allTeams = await this.getTeams();
+    return allTeams.reduce((acc, team) => {
+      const soldShares = team.totalShares - team.availableShares;
+      return acc + soldShares * team.price;
+    }, 0);
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();

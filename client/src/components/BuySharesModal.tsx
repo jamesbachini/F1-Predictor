@@ -30,10 +30,10 @@ export function BuySharesModal({ team, open, onOpenChange }: BuySharesModalProps
   const hasShares = quantity <= team.availableShares;
   const canBuy = canAfford && hasShares && quantity > 0;
 
-  const handleBuy = () => {
+  const handleBuy = async () => {
     if (!canBuy) return;
     
-    const success = buyShares(team.id, quantity);
+    const success = await buyShares(team.id, quantity);
     if (success) {
       toast({
         title: "Purchase successful!",
