@@ -1,17 +1,32 @@
 import { useState } from "react";
-import { TrendingUp, TrendingDown, Wallet, PiggyBank, BarChart3 } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, PiggyBank, BarChart3, Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useMarket } from "@/context/MarketContext";
+import { useWallet } from "@/context/WalletContext";
+import { useQuery } from "@tanstack/react-query";
 import { SellSharesModal } from "./SellSharesModal";
 import type { Team, Holding } from "@shared/schema";
 
+interface USDCBalanceResponse {
+  address: string;
+  balance: string;
+  asset: string;
+}
+
 export function PortfolioSection() {
-  const { holdings, balance, getTeam, getTotalInvestment, getCurrentValue } = useMarket();
+  const { holdings, getTeam, getTotalInvestment, getCurrentValue } = useMarket();
+  const { walletAddress } = useWallet();
   const [sellModalOpen, setSellModalOpen] = useState(false);
   const [selectedHolding, setSelectedHolding] = useState<{ team: Team; holding: Holding } | null>(null);
 
+  const { data: usdcBalance, isLoading: isLoadingBalance } = useQuery<USDCBalanceResponse>({
+    queryKey: ["/api/stellar/balance", walletAddress],
+    enabled: !!walletAddress,
+  });
+
+  const cashBalance = parseFloat(usdcBalance?.balance || "0");
   const totalInvestment = getTotalInvestment();
   const currentValue = getCurrentValue();
   const pnl = currentValue - totalInvestment;
@@ -30,7 +45,7 @@ export function PortfolioSection() {
     .filter(Boolean)
     .sort((a, b) => b!.value - a!.value);
 
-  const totalPortfolioValue = currentValue + balance;
+  const totalPortfolioValue = currentValue + cashBalance;
 
   const handleSellClick = (team: Team, holding: Holding) => {
     setSelectedHolding({ team, holding });
@@ -74,14 +89,20 @@ export function PortfolioSection() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-4 pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
-                Cash Balance
+                USDC Balance
               </CardTitle>
               <PiggyBank className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold tabular-nums" data-testid="text-cash-balance">
-                ${balance.toFixed(2)}
-              </div>
+              {isLoadingBalance ? (
+                <Loader2 className="h-6 w-6 animate-spin" />
+              ) : walletAddress ? (
+                <div className="text-2xl font-bold tabular-nums" data-testid="text-cash-balance">
+                  ${cashBalance.toFixed(2)}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">Connect wallet</p>
+              )}
             </CardContent>
           </Card>
 

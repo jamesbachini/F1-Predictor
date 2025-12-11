@@ -1,4 +1,4 @@
-import { Wallet, TrendingUp, Menu, Plus, Loader2 } from "lucide-react";
+import { Wallet, TrendingUp, Menu, Plus, Loader2, Briefcase } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "./ThemeToggle";
@@ -6,6 +6,7 @@ import { useMarket } from "@/context/MarketContext";
 import { useWallet } from "@/context/WalletContext";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import type { Holding } from "@shared/schema";
 import {
   Sheet,
   SheetContent,
@@ -25,7 +26,7 @@ interface HeaderProps {
 }
 
 export function Header({ onNavigate, activeSection = "market" }: HeaderProps) {
-  const { balance } = useMarket();
+  const { teams, userId } = useMarket();
   const { walletAddress } = useWallet();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [depositOpen, setDepositOpen] = useState(false);
@@ -34,6 +35,16 @@ export function Header({ onNavigate, activeSection = "market" }: HeaderProps) {
     queryKey: ["/api/stellar/balance", walletAddress],
     enabled: !!walletAddress,
   });
+
+  const { data: holdings = [] } = useQuery<Holding[]>({
+    queryKey: ["/api/users", userId, "holdings"],
+    enabled: !!userId,
+  });
+
+  const portfolioValue = holdings.reduce((total, holding) => {
+    const team = teams.find(t => t.id === holding.teamId);
+    return total + (team ? team.price * holding.shares : 0);
+  }, 0);
 
   const navItems = [
     { id: "market" as const, label: "Market" },
@@ -66,9 +77,10 @@ export function Header({ onNavigate, activeSection = "market" }: HeaderProps) {
 
         <div className="flex items-center gap-2">
           <Badge variant="secondary" className="gap-1 px-3 py-1.5">
-            <Wallet className="h-3.5 w-3.5" />
-            <span className="font-semibold tabular-nums" data-testid="text-balance">
-              ${balance.toFixed(2)}
+            <Briefcase className="h-3.5 w-3.5" />
+            <span className="text-xs text-muted-foreground">Portfolio:</span>
+            <span className="font-semibold tabular-nums" data-testid="text-portfolio-value">
+              ${portfolioValue.toFixed(2)}
             </span>
           </Badge>
           
@@ -78,6 +90,7 @@ export function Header({ onNavigate, activeSection = "market" }: HeaderProps) {
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
                 <>
+                  <Wallet className="h-3.5 w-3.5" />
                   <span className="text-xs text-muted-foreground">USDC:</span>
                   <span className="font-semibold tabular-nums" data-testid="text-usdc-balance">
                     ${parseFloat(usdcBalance?.balance || "0").toFixed(2)}

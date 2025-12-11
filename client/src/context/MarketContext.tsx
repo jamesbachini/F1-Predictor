@@ -8,7 +8,6 @@ export type { Team as F1Team } from "@shared/schema";
 interface MarketContextType {
   teams: Team[];
   holdings: Holding[];
-  balance: number;
   userId: string | null;
   isLoading: boolean;
   buyShares: (teamId: string, quantity: number) => Promise<boolean>;
@@ -54,8 +53,8 @@ export function MarketProvider({ children }: { children: ReactNode }) {
     queryKey: ["/api/teams"],
   });
 
-  // Fetch user data
-  const { data: userData } = useQuery<{ id: string; username: string; balance: number }>({
+  // Fetch user data (balance field exists but is deprecated - using wallet USDC instead)
+  const { data: userData } = useQuery<{ id: string; username: string; walletAddress?: string }>({
     queryKey: ["/api/users", userId],
     enabled: !!userId,
   });
@@ -87,8 +86,6 @@ export function MarketProvider({ children }: { children: ReactNode }) {
       queryClient.invalidateQueries({ queryKey: ["/api/users", userId, "holdings"] });
     },
   });
-
-  const balance = userData?.balance ?? 100;
 
   const getTeam = (teamId: string) => teams.find((t) => t.id === teamId);
   const getHolding = (teamId: string) => holdings.find((h) => h.teamId === teamId);
@@ -126,7 +123,6 @@ export function MarketProvider({ children }: { children: ReactNode }) {
       value={{
         teams,
         holdings,
-        balance,
         userId,
         isLoading: teamsLoading,
         buyShares,

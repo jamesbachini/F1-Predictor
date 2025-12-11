@@ -223,13 +223,8 @@ export class DatabaseStorage implements IStorage {
     // Calculate cost
     const totalCost = team.price * quantity;
 
-    // Check balance
-    if (user.balance < totalCost) {
-      return { success: false, error: "Insufficient balance" };
-    }
-
-    // Update user balance
-    await this.updateUserBalance(userId, user.balance - totalCost);
+    // Note: USDC balance verification is done in the route before calling this method
+    // No demo balance deduction - purchases are based on real USDC wallet balance
 
     // Update team price (slight increase on demand) - no share limit
     const priceIncrease = quantity * 0.000001; // Small price increase based on demand
@@ -298,8 +293,8 @@ export class DatabaseStorage implements IStorage {
     const sellPrice = team.price;
     const totalProceeds = sellPrice * quantity;
 
-    // Update user balance (add proceeds)
-    await this.updateUserBalance(userId, user.balance + totalProceeds);
+    // Note: In a full implementation, USDC would be transferred to user's wallet
+    // For now, we just record the transaction and update holdings
 
     // Update team price (slight decrease on selling) - applied AFTER sale
     const priceDecrease = quantity * 0.000001;

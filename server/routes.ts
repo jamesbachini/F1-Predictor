@@ -211,6 +211,21 @@ export async function registerRoutes(
         return res.status(403).json({ error: "Wallet not connected. Please connect your Freighter wallet to trade." });
       }
 
+      // Verify USDC balance in wallet
+      const team = await storage.getTeam(parsed.data.teamId);
+      if (!team) {
+        return res.status(404).json({ error: "Team not found" });
+      }
+      const totalCost = team.price * parsed.data.quantity;
+      const usdcBalance = await getUSDCBalance(user.walletAddress);
+      const availableBalance = parseFloat(usdcBalance);
+      
+      if (availableBalance < totalCost) {
+        return res.status(400).json({ 
+          error: `Insufficient USDC balance. You have $${availableBalance.toFixed(2)} but need $${totalCost.toFixed(2)}.` 
+        });
+      }
+
       const result = await storage.buyShares(parsed.data);
       if (!result.success) {
         return res.status(400).json({ error: result.error });
@@ -230,11 +245,21 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Invalid request", details: parsed.error.errors });
       }
 
+      // Check if user has a linked wallet
+      const user = await storage.getUser(parsed.data.userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      if (!user.walletAddress) {
+        return res.status(403).json({ error: "Wallet not connected. Please connect your Freighter wallet to trade." });
+      }
+
       const result = await storage.sellShares(parsed.data);
       if (!result.success) {
         return res.status(400).json({ error: result.error });
       }
 
+      // Note: In a full implementation, USDC proceeds would be sent to user's wallet
       res.json({ success: true, transaction: result.transaction });
     } catch (error) {
       res.status(500).json({ error: "Failed to process trade" });

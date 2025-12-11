@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Minus, Plus, AlertCircle, Wallet } from "lucide-react";
+import { Minus, Plus, AlertCircle, Wallet, Loader2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -12,6 +12,13 @@ import { Button } from "@/components/ui/button";
 import { useMarket, type F1Team } from "@/context/MarketContext";
 import { useWallet } from "@/context/WalletContext";
 import { useToast } from "@/hooks/use-toast";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+
+interface USDCBalanceResponse {
+  address: string;
+  balance: string;
+  asset: string;
+}
 
 interface BuySharesModalProps {
   team: F1Team | null;
@@ -21,15 +28,23 @@ interface BuySharesModalProps {
 
 export function BuySharesModal({ team, open, onOpenChange }: BuySharesModalProps) {
   const [quantity, setQuantity] = useState(1);
-  const { balance, buyShares } = useMarket();
+  const { buyShares } = useMarket();
   const { walletAddress } = useWallet();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const { data: usdcBalance, isLoading: isLoadingBalance } = useQuery<USDCBalanceResponse>({
+    queryKey: ["/api/stellar/balance", walletAddress],
+    enabled: !!walletAddress && open,
+  });
+
+  const walletConnected = !!walletAddress;
+  const availableBalance = parseFloat(usdcBalance?.balance || "0");
 
   if (!team) return null;
 
   const totalCost = team.price * quantity;
-  const canAfford = totalCost <= balance;
-  const walletConnected = !!walletAddress;
+  const canAfford = totalCost <= availableBalance;
   const canBuy = canAfford && quantity > 0 && walletConnected;
 
   const handleBuy = async () => {
@@ -37,6 +52,7 @@ export function BuySharesModal({ team, open, onOpenChange }: BuySharesModalProps
     
     const success = await buyShares(team.id, quantity);
     if (success) {
+      queryClient.invalidateQueries({ queryKey: ["/api/stellar/balance", walletAddress] });
       toast({
         title: "Purchase successful!",
         description: `You bought ${quantity} shares of ${team.name} for $${totalCost.toFixed(2)}`,
@@ -57,7 +73,7 @@ export function BuySharesModal({ team, open, onOpenChange }: BuySharesModalProps
     setQuantity(1);
   };
 
-  const maxQuantity = Math.floor(balance / team.price);
+  const maxQuantity = Math.floor(availableBalance / team.price);
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -132,15 +148,19 @@ export function BuySharesModal({ team, open, onOpenChange }: BuySharesModalProps
               </span>
             </div>
             <div className="mt-2 flex items-center justify-between text-sm text-muted-foreground">
-              <span>Your Balance</span>
-              <span className="tabular-nums" data-testid="text-modal-balance">${balance.toFixed(2)}</span>
+              <span>USDC Balance</span>
+              {isLoadingBalance ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <span className="tabular-nums" data-testid="text-modal-balance">${availableBalance.toFixed(2)}</span>
+              )}
             </div>
           </div>
 
-          {!canAfford && (
+          {!canAfford && walletConnected && (
             <div className="flex items-center gap-2 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
               <AlertCircle className="h-4 w-4 shrink-0" />
-              <span>Insufficient balance. You need ${(totalCost - balance).toFixed(2)} more.</span>
+              <span>Insufficient USDC balance. You need ${(totalCost - availableBalance).toFixed(2)} more.</span>
             </div>
           )}
 
