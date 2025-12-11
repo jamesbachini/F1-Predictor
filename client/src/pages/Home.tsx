@@ -9,11 +9,9 @@ import { HowItWorks } from "@/components/HowItWorks";
 import { MarketStats } from "@/components/MarketStats";
 import { TeamValueChart } from "@/components/TeamValueChart";
 import { DepositModal } from "@/components/DepositModal";
-import { AdminPanel } from "@/components/AdminPanel";
 import { useWallet } from "@/context/WalletContext";
 import { useMarket } from "@/context/MarketContext";
-import { AlertCircle, Trophy, Settings } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { AlertCircle, Trophy } from "lucide-react";
 import type { F1Team } from "@/context/MarketContext";
 
 interface SeasonResponse {
@@ -31,7 +29,6 @@ export default function Home() {
   const [selectedTeam, setSelectedTeam] = useState<F1Team | null>(null);
   const [buyModalOpen, setBuyModalOpen] = useState(false);
   const [connectWalletModalOpen, setConnectWalletModalOpen] = useState(false);
-  const [showAdmin, setShowAdmin] = useState(false);
 
   const { data: season } = useQuery<SeasonResponse>({
     queryKey: ["/api/season"],
@@ -109,23 +106,6 @@ export default function Home() {
         open={connectWalletModalOpen}
         onOpenChange={setConnectWalletModalOpen}
       />
-
-      <section className="py-8">
-        <div className="mx-auto max-w-7xl px-4">
-          <div className="flex items-center justify-between mb-4">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowAdmin(!showAdmin)}
-              data-testid="button-toggle-admin"
-            >
-              <Settings className="h-4 w-4 mr-2" />
-              {showAdmin ? "Hide Admin" : "Admin Panel"}
-            </Button>
-          </div>
-          {showAdmin && <AdminPanel />}
-        </div>
-      </section>
 
       <footer className="border-t py-8">
         <div className="mx-auto max-w-7xl px-4 text-center text-sm text-muted-foreground">

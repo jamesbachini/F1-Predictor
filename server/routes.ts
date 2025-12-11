@@ -374,6 +374,35 @@ export async function registerRoutes(
     }
   });
 
+  // ============ Admin Authentication ============
+
+  // Helper to check if wallet is admin
+  function isAdminWallet(walletAddress: string | undefined): boolean {
+    if (!walletAddress) return false;
+    const adminAddresses = (process.env.ADMIN_WALLET_ADDRESSES || "").split(",").map(a => a.trim());
+    return adminAddresses.includes(walletAddress);
+  }
+
+  // Middleware to protect admin routes
+  function requireAdmin(req: any, res: any, next: any) {
+    const walletAddress = req.headers["x-wallet-address"] as string;
+    if (!isAdminWallet(walletAddress)) {
+      return res.status(403).json({ error: "Unauthorized. Admin wallet required." });
+    }
+    next();
+  }
+
+  // Check if a wallet address is an admin
+  app.get("/api/admin/check/:walletAddress", async (req, res) => {
+    try {
+      const { walletAddress } = req.params;
+      const isAdmin = isAdminWallet(walletAddress);
+      res.json({ isAdmin });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to check admin status" });
+    }
+  });
+
   // ============ Season Management Routes ============
 
   // Get current season status
@@ -390,7 +419,7 @@ export async function registerRoutes(
   });
 
   // Create a new season (admin)
-  app.post("/api/admin/season/create", async (req, res) => {
+  app.post("/api/admin/season/create", requireAdmin, async (req, res) => {
     try {
       const { year } = req.body;
       if (!year || typeof year !== "number") {
@@ -411,7 +440,7 @@ export async function registerRoutes(
   });
 
   // Close season and declare winner (admin)
-  app.post("/api/admin/season/conclude", async (req, res) => {
+  app.post("/api/admin/season/conclude", requireAdmin, async (req, res) => {
     try {
       const { winningTeamId } = req.body;
       if (!winningTeamId) {
@@ -455,7 +484,7 @@ export async function registerRoutes(
   });
 
   // Calculate and create payout records (admin)
-  app.post("/api/admin/season/calculate-payouts", async (req, res) => {
+  app.post("/api/admin/season/calculate-payouts", requireAdmin, async (req, res) => {
     try {
       // Get current season
       const currentSeason = await storage.getCurrentSeason();
@@ -515,7 +544,7 @@ export async function registerRoutes(
   });
 
   // Get payouts for a season
-  app.get("/api/admin/season/:seasonId/payouts", async (req, res) => {
+  app.get("/api/admin/season/:seasonId/payouts", requireAdmin, async (req, res) => {
     try {
       const payouts = await storage.getPayoutsBySeason(req.params.seasonId);
       res.json(payouts);
@@ -535,7 +564,7 @@ export async function registerRoutes(
   });
 
   // Distribute payouts - send USDC to winners (admin)
-  app.post("/api/admin/season/distribute-payouts", async (req, res) => {
+  app.post("/api/admin/season/distribute-payouts", requireAdmin, async (req, res) => {
     try {
       // Get current season
       const currentSeason = await storage.getCurrentSeason();

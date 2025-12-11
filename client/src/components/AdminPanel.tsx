@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -11,10 +11,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { queryClient } from "@/lib/queryClient";
 import { useMarket } from "@/context/MarketContext";
+import { useWallet } from "@/context/WalletContext";
 import { Trophy, Play, CheckCircle, AlertCircle, DollarSign, Lock } from "lucide-react";
-import type { Team, Season, Payout } from "@shared/schema";
+import type { Payout } from "@shared/schema";
 
 interface SeasonResponse {
   exists: boolean;
@@ -28,8 +29,26 @@ interface SeasonResponse {
 
 export function AdminPanel() {
   const { teams } = useMarket();
+  const { walletAddress } = useWallet();
   const { toast } = useToast();
   const [selectedTeamId, setSelectedTeamId] = useState<string>("");
+
+  const adminApiRequest = async (url: string, method: string, data?: unknown) => {
+    const res = await fetch(url, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        "x-wallet-address": walletAddress || "",
+      },
+      body: data ? JSON.stringify(data) : undefined,
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || res.statusText);
+    }
+    return res.json();
+  };
 
   const { data: season, isLoading: seasonLoading } = useQuery<SeasonResponse>({
     queryKey: ["/api/season"],
@@ -39,12 +58,16 @@ export function AdminPanel() {
   
   const { data: payouts = [] } = useQuery<Payout[]>({
     queryKey: [payoutsQueryKey],
+    queryFn: async () => {
+      if (!payoutsQueryKey) return [];
+      return adminApiRequest(payoutsQueryKey, "GET");
+    },
     enabled: !!payoutsQueryKey && season?.status === "concluded",
   });
 
   const createSeasonMutation = useMutation({
     mutationFn: async () => {
-      return apiRequest("/api/admin/season/create", "POST", { year: 2026 });
+      return adminApiRequest("/api/admin/season/create", "POST", { year: 2026 });
     },
     onSuccess: () => {
       toast({ title: "Season Created", description: "2026 season has been created and is now active." });
@@ -57,7 +80,7 @@ export function AdminPanel() {
 
   const concludeSeasonMutation = useMutation({
     mutationFn: async (winningTeamId: string) => {
-      return apiRequest("/api/admin/season/conclude", "POST", { winningTeamId });
+      return adminApiRequest("/api/admin/season/conclude", "POST", { winningTeamId });
     },
     onSuccess: (data: any) => {
       toast({ 
@@ -73,7 +96,7 @@ export function AdminPanel() {
 
   const calculatePayoutsMutation = useMutation({
     mutationFn: async () => {
-      return apiRequest("/api/admin/season/calculate-payouts", "POST", {});
+      return adminApiRequest("/api/admin/season/calculate-payouts", "POST", {});
     },
     onSuccess: (data: any) => {
       toast({ 
@@ -91,7 +114,7 @@ export function AdminPanel() {
 
   const distributePayoutsMutation = useMutation({
     mutationFn: async () => {
-      return apiRequest("/api/admin/season/distribute-payouts", "POST", {});
+      return adminApiRequest("/api/admin/season/distribute-payouts", "POST", {});
     },
     onSuccess: (data: any) => {
       toast({ title: "Payouts Distributed", description: data.message });

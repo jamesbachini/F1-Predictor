@@ -7,12 +7,14 @@ import { ThemeProvider } from "@/context/ThemeContext";
 import { MarketProvider } from "@/context/MarketContext";
 import { WalletProvider } from "@/context/WalletContext";
 import Home from "@/pages/Home";
+import Admin from "@/pages/Admin";
 import NotFound from "@/pages/not-found";
 
 function Router() {
   return (
     <Switch>
       <Route path="/" component={Home} />
+      <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>
   );
