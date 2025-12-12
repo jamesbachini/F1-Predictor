@@ -187,6 +187,200 @@ export async function sendUSDCPayment(
   }
 }
 
+export interface BuildTransactionResult {
+  success: boolean;
+  xdr?: string;
+  networkPassphrase?: string;
+  error?: string;
+}
+
+// Build an unsigned transaction for the user to sign with Freighter
+export async function buildUSDCPaymentTransaction(
+  sourceAddress: string,
+  amount: string,
+  memo?: string
+): Promise<BuildTransactionResult> {
+  try {
+    const secretKey = process.env.STELLAR_SECRET_KEY;
+    if (!secretKey) {
+      return { success: false, error: "Platform wallet not configured" };
+    }
+
+    const platformKeypair = Stellar.Keypair.fromSecret(secretKey);
+    const platformAddress = platformKeypair.publicKey();
+
+    // Load source account (user's account)
+    const sourceAccount = await server.loadAccount(sourceAddress);
+
+    // Build the transaction - user pays USDC to platform
+    let transactionBuilder = new Stellar.TransactionBuilder(sourceAccount, {
+      fee: "100000",
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(
+        Stellar.Operation.payment({
+          destination: platformAddress,
+          asset: USDC_ASSET,
+          amount: amount,
+        })
+      )
+      .setTimeout(180);
+
+    // Add memo if provided
+    if (memo) {
+      transactionBuilder = transactionBuilder.addMemo(Stellar.Memo.text(memo.slice(0, 28)));
+    }
+
+    const transaction = transactionBuilder.build();
+
+    return {
+      success: true,
+      xdr: transaction.toXDR(),
+      networkPassphrase: NETWORK_PASSPHRASE,
+    };
+  } catch (error: any) {
+    console.error("Build transaction error:", error);
+    return {
+      success: false,
+      error: error.message || "Failed to build transaction",
+    };
+  }
+}
+
+export interface TransactionValidation {
+  valid: boolean;
+  error?: string;
+  sourceAccount?: string;
+  destinationAccount?: string;
+  amount?: string;
+  asset?: string;
+}
+
+// Verify a signed transaction before submission
+export function verifySignedTransaction(
+  signedXdr: string,
+  expectedSource: string,
+  expectedAmount: string
+): TransactionValidation {
+  try {
+    const parsed = Stellar.TransactionBuilder.fromXDR(
+      signedXdr,
+      NETWORK_PASSPHRASE
+    );
+
+    // Reject fee bump transactions
+    if (parsed instanceof Stellar.FeeBumpTransaction) {
+      return { valid: false, error: "Fee bump transactions not supported" };
+    }
+
+    const transaction = parsed as Stellar.Transaction;
+
+    const platformAddress = getPlatformAddress();
+    if (!platformAddress) {
+      return { valid: false, error: "Platform wallet not configured" };
+    }
+
+    // Check source account
+    const sourceAccount = transaction.source;
+    if (sourceAccount !== expectedSource) {
+      return { 
+        valid: false, 
+        error: `Invalid source account. Expected ${expectedSource.slice(0, 8)}..., got ${sourceAccount.slice(0, 8)}...` 
+      };
+    }
+
+    // Check operations
+    const operations = transaction.operations;
+    if (operations.length !== 1) {
+      return { valid: false, error: "Transaction must have exactly one operation" };
+    }
+
+    const op = operations[0] as Stellar.Operation.Payment;
+    if (op.type !== "payment") {
+      return { valid: false, error: "Transaction must be a payment operation" };
+    }
+
+    // Verify destination is platform wallet
+    if (op.destination !== platformAddress) {
+      return { 
+        valid: false, 
+        error: `Invalid destination. Payment must go to platform wallet.` 
+      };
+    }
+
+    // Verify asset is USDC
+    const asset = op.asset as Stellar.Asset;
+    if (asset.code !== "USDC" || asset.issuer !== USDC_ISSUER) {
+      return { valid: false, error: "Transaction must pay USDC" };
+    }
+
+    // Verify amount matches expected (with small tolerance for rounding)
+    const txAmount = parseFloat(op.amount);
+    const expected = parseFloat(expectedAmount);
+    if (Math.abs(txAmount - expected) > 0.0001) {
+      return { 
+        valid: false, 
+        error: `Invalid amount. Expected $${expected.toFixed(2)}, got $${txAmount.toFixed(2)}` 
+      };
+    }
+
+    return {
+      valid: true,
+      sourceAccount,
+      destinationAccount: op.destination,
+      amount: op.amount,
+      asset: `${asset.code}:${asset.issuer}`,
+    };
+  } catch (error: any) {
+    return { valid: false, error: "Failed to parse transaction: " + error.message };
+  }
+}
+
+// Submit a signed transaction to the network
+export async function submitSignedTransaction(
+  signedXdr: string
+): Promise<TransferResult> {
+  try {
+    const transaction = Stellar.TransactionBuilder.fromXDR(
+      signedXdr,
+      NETWORK_PASSPHRASE
+    );
+
+    const result = await server.submitTransaction(transaction);
+
+    return {
+      success: true,
+      transactionHash: result.hash,
+    };
+  } catch (error: any) {
+    console.error("Submit transaction error:", error);
+    
+    // Parse Stellar error for better messaging
+    let errorMessage = "Failed to submit transaction";
+    if (error.response?.data?.extras?.result_codes) {
+      const codes = error.response.data.extras.result_codes;
+      if (codes.operations?.includes("op_underfunded")) {
+        errorMessage = "Insufficient USDC balance";
+      } else if (codes.transaction === "tx_bad_auth") {
+        errorMessage = "Transaction signature invalid";
+      } else {
+        errorMessage = `Transaction failed: ${JSON.stringify(codes)}`;
+      }
+    }
+    
+    return {
+      success: false,
+      error: errorMessage,
+    };
+  }
+}
+
+export function getPlatformAddress(): string | null {
+  const secretKey = process.env.STELLAR_SECRET_KEY;
+  if (!secretKey) return null;
+  return Stellar.Keypair.fromSecret(secretKey).publicKey();
+}
+
 export {
   USDC_ASSET,
   USDC_ISSUER,

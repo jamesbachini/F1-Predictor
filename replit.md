@@ -78,6 +78,33 @@ Preferred communication style: Simple, everyday language.
 - Memo-based deposit tracking using user UUID (first 28 characters)
 - Demo credits with $5000 lifetime limit per user for testing
 
+### Secure Buy Order Flow (Nonce-Based Verification)
+Buy orders require USDC payment via signed Stellar transactions with server-side verification:
+
+1. **Build Transaction** (`POST /api/clob/orders/build-transaction`)
+   - Client sends order parameters (marketId, price, quantity, etc.)
+   - Server calculates required collateral = price × quantity
+   - Server generates secure 16-byte nonce and stores {userId, walletAddress, collateralAmount, orderDetails}
+   - Server builds unsigned USDC payment transaction and returns with nonce
+
+2. **Sign Transaction** (Client-side with Freighter)
+   - User signs the unsigned transaction in Freighter wallet
+   - Returns signed XDR
+
+3. **Submit Signed Transaction** (`POST /api/clob/orders/submit-signed`)
+   - Client sends {signedXdr, nonce} - NO orderDetails accepted
+   - Server looks up stored expectation by nonce, deletes immediately (single-use)
+   - Server verifies: source=stored wallet, destination=platform, asset=USDC, amount=stored collateral
+   - If verification passes, submits to Stellar network
+   - Credits user internal balance with stored collateralAmount
+   - Places order using stored orderDetails (not client-supplied)
+
+**Security Properties:**
+- Nonces are cryptographically random, single-use, and expire after 5 minutes
+- Order details come from server storage, not client request at submission
+- Transaction amount verified against server-stored expectation, not client-claimed values
+- Buy orders on legacy endpoint rejected - must use signed transaction flow
+
 ### Development Tools
 - Replit-specific plugins: vite-plugin-runtime-error-modal, vite-plugin-cartographer, vite-plugin-dev-banner
 - connect-pg-simple for PostgreSQL session storage (available but sessions not currently implemented)

@@ -8,7 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Loader2, TrendingUp, TrendingDown } from "lucide-react";
+import { Loader2, TrendingUp, TrendingDown, Wallet } from "lucide-react";
+import { useWallet } from "@/context/WalletContext";
 
 interface Market {
   id: string;
@@ -38,11 +39,13 @@ export function PlaceOrderModal({
   userBalance,
 }: PlaceOrderModalProps) {
   const { toast } = useToast();
+  const { walletAddress } = useWallet();
   
   const [outcome, setOutcome] = useState<"yes" | "no">("yes");
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [price, setPrice] = useState("0.50");
   const [quantity, setQuantity] = useState("10");
+  const [isSigningTransaction, setIsSigningTransaction] = useState(false);
 
   const { data: position } = useQuery({
     queryKey: ["/api/clob/users", userId, "positions"],
@@ -54,17 +57,25 @@ export function PlaceOrderModal({
     enabled: !!userId && !!market,
   });
 
+  const { data: usdcBalance } = useQuery<{ balance: string } | undefined>({
+    queryKey: ["/api/stellar/balance", walletAddress],
+    enabled: !!walletAddress,
+  });
+
   const userPosition = position?.find((p: any) => p.marketId === market?.id);
   const yesShares = userPosition?.yesShares || 0;
   const noShares = userPosition?.noShares || 0;
+  
+  const walletUsdcBalance = usdcBalance?.balance ? parseFloat(usdcBalance.balance) : 0;
 
-  const placeOrderMutation = useMutation({
+  // Mutation for sell orders (no blockchain transaction needed)
+  const sellOrderMutation = useMutation({
     mutationFn: async () => {
       return apiRequest("/api/clob/orders", "POST", {
         marketId: market?.id,
         userId,
         outcome,
-        side,
+        side: "sell",
         price: parseFloat(price),
         quantity: parseInt(quantity),
       });
@@ -72,15 +83,12 @@ export function PlaceOrderModal({
     onSuccess: (data: any) => {
       const fillCount = data.fills?.length || 0;
       toast({
-        title: "Order Placed",
+        title: "Sell Order Placed",
         description: fillCount > 0 
           ? `Order placed with ${fillCount} fill(s)`
           : "Order added to order book",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/clob/markets", market?.id, "orderbook"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/clob/users", userId, "orders"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/clob/users", userId, "positions"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/users", userId] });
+      invalidateQueries();
       onClose();
     },
     onError: (error: any) => {
@@ -91,6 +99,109 @@ export function PlaceOrderModal({
       });
     },
   });
+
+  const invalidateQueries = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/clob/markets", market?.id, "orderbook"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/clob/users", userId, "orders"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/clob/users", userId, "positions"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/users", userId] });
+    queryClient.invalidateQueries({ queryKey: ["/api/stellar/balance", walletAddress] });
+  };
+
+  // Handle buy order with Freighter signing
+  const handleBuyOrder = async () => {
+    if (!market || !walletAddress) return;
+    
+    setIsSigningTransaction(true);
+    
+    try {
+      // Step 1: Build unsigned transaction
+      const buildResponse = await fetch("/api/clob/orders/build-transaction", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          marketId: market.id,
+          userId,
+          outcome,
+          side: "buy",
+          price: parseFloat(price),
+          quantity: parseInt(quantity),
+        }),
+      });
+      
+      const buildResult = await buildResponse.json();
+      
+      if (!buildResponse.ok) {
+        throw new Error(buildResult.error || "Failed to build transaction");
+      }
+      
+      if (!buildResult.requiresPayment) {
+        // No payment needed (shouldn't happen for buy orders)
+        throw new Error("Unexpected: no payment required for buy order");
+      }
+      
+      // Step 2: Sign with Freighter
+      const { signTransaction } = await import("@stellar/freighter-api");
+      
+      toast({
+        title: "Sign Transaction",
+        description: `Please sign the transaction for $${buildResult.collateralAmount.toFixed(2)} USDC`,
+      });
+      
+      const signResult = await signTransaction(buildResult.xdr, {
+        networkPassphrase: buildResult.networkPassphrase,
+      });
+      
+      if (!signResult.signedTxXdr) {
+        throw new Error("Transaction signing was cancelled");
+      }
+      
+      // Step 3: Submit signed transaction with server-generated nonce
+      const submitResponse = await fetch("/api/clob/orders/submit-signed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          signedXdr: signResult.signedTxXdr,
+          nonce: buildResult.nonce,
+        }),
+      });
+      
+      const submitResult = await submitResponse.json();
+      
+      if (!submitResponse.ok) {
+        throw new Error(submitResult.error || "Failed to submit order");
+      }
+      
+      const fillCount = submitResult.fills?.length || 0;
+      toast({
+        title: "Order Placed Successfully",
+        description: fillCount > 0 
+          ? `Order filled with ${fillCount} match(es). TX: ${submitResult.transactionHash?.slice(0, 8)}...`
+          : `Order added to book. TX: ${submitResult.transactionHash?.slice(0, 8)}...`,
+      });
+      
+      invalidateQueries();
+      onClose();
+      
+    } catch (error: any) {
+      console.error("Buy order error:", error);
+      toast({
+        title: "Order Failed",
+        description: error.message || "Failed to place buy order",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSigningTransaction(false);
+    }
+  };
+
+  const handleSubmitOrder = () => {
+    if (side === "buy") {
+      handleBuyOrder();
+    } else {
+      sellOrderMutation.mutate();
+    }
+  };
 
   const priceNum = parseFloat(price) || 0;
   const quantityNum = parseInt(quantity) || 0;
@@ -103,7 +214,9 @@ export function PlaceOrderModal({
     quantityNum > 0 &&
     (side === "sell" 
       ? (outcome === "yes" ? yesShares >= quantityNum : noShares >= quantityNum)
-      : userBalance >= totalCost);
+      : walletUsdcBalance >= totalCost);
+
+  const isPending = isSigningTransaction || sellOrderMutation.isPending;
 
   if (!market) return null;
 
@@ -119,7 +232,9 @@ export function PlaceOrderModal({
             Trade: {teamName} Wins?
           </DialogTitle>
           <DialogDescription>
-            Place a limit order on the order book
+            {side === "buy" 
+              ? "Sign a transaction to place your order" 
+              : "Place a limit order on the order book"}
           </DialogDescription>
         </DialogHeader>
 
@@ -192,13 +307,16 @@ export function PlaceOrderModal({
 
           <div className="bg-muted/50 rounded-lg p-3 space-y-2">
             <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Your Balance:</span>
-              <span>${userBalance.toFixed(2)} USDC</span>
+              <span className="text-muted-foreground">Wallet USDC:</span>
+              <span className="flex items-center gap-1">
+                <Wallet className="w-3 h-3" />
+                ${walletUsdcBalance.toFixed(2)}
+              </span>
             </div>
             {side === "buy" && (
               <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Cost:</span>
-                <span>${totalCost.toFixed(2)}</span>
+                <span className="text-muted-foreground">Cost (requires signature):</span>
+                <span className="font-medium">${totalCost.toFixed(2)}</span>
               </div>
             )}
             <div className="flex justify-between text-sm">
@@ -222,20 +340,32 @@ export function PlaceOrderModal({
             )}
           </div>
 
+          {side === "buy" && (
+            <div className="bg-blue-500/10 rounded-lg p-3 text-sm text-blue-700 dark:text-blue-300">
+              <p>You will be asked to sign a Stellar transaction to transfer ${totalCost.toFixed(2)} USDC as collateral for this order.</p>
+            </div>
+          )}
+
           <div className="flex gap-2">
             <Button variant="outline" onClick={onClose} className="flex-1" data-testid="button-cancel-order">
               Cancel
             </Button>
             <Button
-              onClick={() => placeOrderMutation.mutate()}
-              disabled={!canSubmit || placeOrderMutation.isPending}
+              onClick={handleSubmitOrder}
+              disabled={!canSubmit || isPending}
               className="flex-1"
               data-testid="button-submit-order"
             >
-              {placeOrderMutation.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+              {isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                  {isSigningTransaction ? "Signing..." : "Processing..."}
+                </>
               ) : (
-                `${side === "buy" ? "Buy" : "Sell"} ${outcome.toUpperCase()}`
+                <>
+                  {side === "buy" && <Wallet className="w-4 h-4 mr-1" />}
+                  {side === "buy" ? "Sign & Buy" : "Sell"} {outcome.toUpperCase()}
+                </>
               )}
             </Button>
           </div>

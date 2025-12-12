@@ -11,11 +11,49 @@ import {
   getRecentUSDCPayments,
   generateDepositMemo,
   sendUSDCPayment,
+  buildUSDCPaymentTransaction,
+  submitSignedTransaction,
+  verifySignedTransaction,
+  getPlatformAddress,
   USE_TESTNET,
-  USDC_ISSUER
+  USDC_ISSUER,
+  NETWORK_PASSPHRASE
 } from "./stellar";
 import { matchingEngine } from "./matchingEngine";
 import { marketMaker } from "./marketMaker";
+import { randomBytes } from "crypto";
+
+// In-memory store for pending transaction expectations
+// Key: nonce, Value: { userId, walletAddress, collateralAmount, orderDetails, createdAt }
+interface PendingTransaction {
+  userId: string;
+  walletAddress: string;
+  collateralAmount: number;
+  orderDetails: {
+    marketId: string;
+    outcome: "yes" | "no";
+    side: "buy" | "sell";
+    price: number;
+    quantity: number;
+  };
+  createdAt: number;
+}
+
+const pendingTransactions = new Map<string, PendingTransaction>();
+
+// Clean up expired transactions (older than 5 minutes)
+function cleanupExpiredTransactions() {
+  const now = Date.now();
+  const expirationMs = 5 * 60 * 1000; // 5 minutes
+  for (const [nonce, tx] of pendingTransactions) {
+    if (now - tx.createdAt > expirationMs) {
+      pendingTransactions.delete(nonce);
+    }
+  }
+}
+
+// Run cleanup every minute
+setInterval(cleanupExpiredTransactions, 60 * 1000);
 
 export async function registerRoutes(
   httpServer: Server,
@@ -411,7 +449,144 @@ export async function registerRoutes(
     }
   });
 
-  // Place an order
+  // Build unsigned transaction for order collateral
+  app.post("/api/clob/orders/build-transaction", async (req, res) => {
+    try {
+      const parsed = placeOrderSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid order data", details: parsed.error.errors });
+      }
+
+      const { marketId, userId, outcome, side, price, quantity } = parsed.data;
+      
+      // Only buy orders require collateral payment
+      if (side !== "buy") {
+        return res.json({ requiresPayment: false });
+      }
+
+      // Get user's wallet address
+      const user = await storage.getUser(userId);
+      if (!user?.walletAddress) {
+        return res.status(400).json({ error: "Wallet not connected" });
+      }
+
+      // Calculate collateral required
+      const collateralRequired = price * quantity;
+      
+      // Verify user has enough USDC
+      const usdcBalance = await getUSDCBalance(user.walletAddress);
+      if (parseFloat(usdcBalance) < collateralRequired) {
+        return res.status(400).json({ 
+          error: `Insufficient USDC. Need $${collateralRequired.toFixed(2)}, have $${parseFloat(usdcBalance).toFixed(2)}` 
+        });
+      }
+
+      // Build unsigned transaction
+      const txResult = await buildUSDCPaymentTransaction(
+        user.walletAddress,
+        collateralRequired.toFixed(7),
+        `order:${marketId.slice(0, 15)}`
+      );
+
+      if (!txResult.success) {
+        return res.status(500).json({ error: txResult.error });
+      }
+
+      // Generate a secure nonce and store the expected transaction
+      const nonce = randomBytes(16).toString("hex");
+      pendingTransactions.set(nonce, {
+        userId,
+        walletAddress: user.walletAddress,
+        collateralAmount: collateralRequired,
+        orderDetails: { marketId, outcome, side, price, quantity },
+        createdAt: Date.now(),
+      });
+
+      res.json({
+        requiresPayment: true,
+        nonce, // Client must return this when submitting
+        xdr: txResult.xdr,
+        networkPassphrase: txResult.networkPassphrase,
+        collateralAmount: collateralRequired,
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to build transaction" });
+    }
+  });
+
+  // Submit signed transaction and place order
+  app.post("/api/clob/orders/submit-signed", async (req, res) => {
+    try {
+      const { signedXdr, nonce } = req.body;
+      
+      if (!signedXdr || !nonce) {
+        return res.status(400).json({ error: "Missing signed transaction or nonce" });
+      }
+
+      // Look up the pending transaction by nonce
+      const pending = pendingTransactions.get(nonce);
+      if (!pending) {
+        return res.status(400).json({ 
+          error: "Invalid or expired transaction. Please start a new order." 
+        });
+      }
+
+      // Delete immediately to prevent replay attacks (single-use nonce)
+      pendingTransactions.delete(nonce);
+
+      // Check if transaction has expired (5 minutes)
+      if (Date.now() - pending.createdAt > 5 * 60 * 1000) {
+        return res.status(400).json({ 
+          error: "Transaction expired. Please start a new order." 
+        });
+      }
+
+      // CRITICAL: Verify the signed transaction against server-stored expectation
+      // This prevents attacks where user submits any valid transaction
+      const verification = verifySignedTransaction(
+        signedXdr,
+        pending.walletAddress,
+        pending.collateralAmount.toFixed(7)
+      );
+
+      if (!verification.valid) {
+        return res.status(400).json({ 
+          error: `Transaction verification failed: ${verification.error}` 
+        });
+      }
+
+      // Submit the verified transaction to Stellar
+      const submitResult = await submitSignedTransaction(signedXdr);
+      
+      if (!submitResult.success) {
+        return res.status(400).json({ error: submitResult.error });
+      }
+
+      // Get user to credit their balance
+      const user = await storage.getUser(pending.userId);
+      if (!user) {
+        return res.status(400).json({ error: "User not found" });
+      }
+
+      // Transaction successful and verified - credit user's internal balance
+      await storage.updateUserBalance(pending.userId, user.balance + pending.collateralAmount);
+
+      // Now place the order using server-stored order details (not client-supplied)
+      const { marketId, outcome, side, price, quantity } = pending.orderDetails;
+      const result = await matchingEngine.placeOrder(marketId, pending.userId, outcome, side, price, quantity);
+      
+      res.json({
+        ...result,
+        transactionHash: submitResult.transactionHash,
+        verifiedAmount: verification.amount,
+        message: "Order placed successfully. USDC transferred from your wallet."
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to submit order" });
+    }
+  });
+
+  // Place an order (for sell orders that don't require payment, or legacy flow)
   app.post("/api/clob/orders", async (req, res) => {
     try {
       const parsed = placeOrderSchema.safeParse(req.body);
@@ -420,6 +595,14 @@ export async function registerRoutes(
       }
 
       const { marketId, userId, outcome, side, price, quantity } = parsed.data;
+      
+      // For buy orders, require signed transaction flow
+      if (side === "buy") {
+        return res.status(400).json({ 
+          error: "Buy orders require signed transaction. Use /api/clob/orders/build-transaction first." 
+        });
+      }
+      
       const result = await matchingEngine.placeOrder(marketId, userId, outcome, side, price, quantity);
       res.json(result);
     } catch (error: any) {
