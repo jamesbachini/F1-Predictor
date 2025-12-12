@@ -28,7 +28,7 @@ interface USDCBalanceResponse {
 }
 
 export function DepositModal({ open, onOpenChange }: DepositModalProps) {
-  const { userId } = useMarket();
+  const { userId, resetUser } = useMarket();
   const { walletAddress, isFreighterInstalled, isConnecting, connectWallet, disconnectWallet } = useWallet();
   const { toast } = useToast();
   
@@ -66,6 +66,16 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
             });
             if (!res.ok) {
               const error = await res.json();
+              // Handle stale user ID - reset user and close modal
+              if (res.status === 404 && error.error === "User not found") {
+                resetUser();
+                onOpenChange(false);
+                toast({
+                  title: "Session Reset",
+                  description: "Your session was reset. Please try connecting again.",
+                });
+                return;
+              }
               toast({
                 title: "Wallet Link Failed",
                 description: error.error || "Failed to verify wallet. Please try again.",

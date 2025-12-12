@@ -16,6 +16,7 @@ interface MarketContextType {
   getTotalInvestment: () => number;
   getCurrentValue: () => number;
   refetch: () => void;
+  resetUser: () => void;
 }
 
 const MarketContext = createContext<MarketContextType | undefined>(undefined);
@@ -118,6 +119,12 @@ export function MarketProvider({ children }: { children: ReactNode }) {
     queryClient.invalidateQueries({ queryKey: ["/api/users", userId, "holdings"] });
   };
 
+  const resetUser = () => {
+    localStorage.removeItem(USER_STORAGE_KEY);
+    setUserId(null);
+    // The useEffect will automatically create a new guest user
+  };
+
   return (
     <MarketContext.Provider
       value={{
@@ -131,6 +138,7 @@ export function MarketProvider({ children }: { children: ReactNode }) {
         getTotalInvestment,
         getCurrentValue,
         refetch,
+        resetUser,
       }}
     >
       {children}

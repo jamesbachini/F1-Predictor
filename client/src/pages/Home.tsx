@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Header } from "@/components/Header";
 import { HeroSection } from "@/components/HeroSection";
 import { MarketOverview } from "@/components/MarketOverview";
-import { BuySharesModal } from "@/components/BuySharesModal";
+import { PlaceOrderModal } from "@/components/PlaceOrderModal";
 import { PortfolioSection } from "@/components/PortfolioSection";
 import { HowItWorks } from "@/components/HowItWorks";
 import { MarketStats } from "@/components/MarketStats";
@@ -13,6 +13,22 @@ import { useWallet } from "@/context/WalletContext";
 import { useMarket } from "@/context/MarketContext";
 import { AlertCircle, Trophy } from "lucide-react";
 import type { F1Team } from "@/context/MarketContext";
+
+interface Market {
+  id: string;
+  seasonId: string;
+  teamId: string;
+  outstandingPairs: number;
+  lockedCollateral: number;
+  lastPrice: number | null;
+  status: string;
+}
+
+interface USDCBalanceResponse {
+  address: string;
+  balance: string;
+  asset: string;
+}
 
 interface SeasonResponse {
   exists: boolean;
@@ -24,15 +40,31 @@ interface SeasonResponse {
 
 export default function Home() {
   const { walletAddress } = useWallet();
-  const { teams } = useMarket();
+  const { teams, userId } = useMarket();
   const [activeSection, setActiveSection] = useState<"market" | "portfolio">("market");
   const [selectedTeam, setSelectedTeam] = useState<F1Team | null>(null);
-  const [buyModalOpen, setBuyModalOpen] = useState(false);
+  const [selectedMarket, setSelectedMarket] = useState<Market | null>(null);
+  const [orderModalOpen, setOrderModalOpen] = useState(false);
   const [connectWalletModalOpen, setConnectWalletModalOpen] = useState(false);
 
   const { data: season } = useQuery<SeasonResponse>({
     queryKey: ["/api/season"],
   });
+
+  const { data: markets = [] } = useQuery<Market[]>({
+    queryKey: ["/api/clob/markets"],
+  });
+
+  const { data: usdcBalance } = useQuery<USDCBalanceResponse>({
+    queryKey: ["/api/stellar/balance", walletAddress],
+    enabled: !!walletAddress,
+  });
+
+  const walletUsdcBalance = parseFloat(usdcBalance?.balance || "0");
+
+  const getMarketForTeam = (teamId: string) => {
+    return markets.find((m) => m.teamId === teamId);
+  };
 
   const isSeasonConcluded = season?.exists && season.status === "concluded";
   const winningTeam = season?.winningTeamId 
@@ -47,8 +79,13 @@ export default function Home() {
       setConnectWalletModalOpen(true);
       return;
     }
+    const market = getMarketForTeam(team.id);
+    if (!market) {
+      return;
+    }
     setSelectedTeam(team);
-    setBuyModalOpen(true);
+    setSelectedMarket(market);
+    setOrderModalOpen(true);
   };
 
   const handleStartTrading = () => {
@@ -96,11 +133,21 @@ export default function Home() {
         <PortfolioSection />
       )}
 
-      <BuySharesModal
-        team={selectedTeam}
-        open={buyModalOpen}
-        onOpenChange={setBuyModalOpen}
-      />
+      {selectedMarket && selectedTeam && userId && (
+        <PlaceOrderModal
+          open={orderModalOpen}
+          onClose={() => {
+            setOrderModalOpen(false);
+            setSelectedMarket(null);
+            setSelectedTeam(null);
+          }}
+          market={selectedMarket}
+          teamName={selectedTeam.name}
+          teamColor={selectedTeam.color}
+          userId={userId}
+          userBalance={walletUsdcBalance}
+        />
+      )}
 
       <DepositModal
         open={connectWalletModalOpen}
