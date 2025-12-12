@@ -76,6 +76,7 @@ export interface IStorage {
   getMarket(id: string): Promise<Market | undefined>;
   createMarket(market: InsertMarket): Promise<Market>;
   createMarketsForSeason(seasonId: string): Promise<Market[]>;
+  getMarketsBySeason(seasonId: string): Promise<Market[]>;
 }
 
 // Initial F1 2026 teams data - all teams start at equal $0.10 price
@@ -538,6 +539,10 @@ export class DatabaseStorage implements IStorage {
   // CLOB Markets
   async getMarkets(): Promise<Market[]> {
     return await db.select().from(markets).orderBy(asc(markets.createdAt));
+  }
+
+  async getMarketsBySeason(seasonId: string): Promise<Market[]> {
+    return await db.select().from(markets).where(eq(markets.seasonId, seasonId));
   }
 
   async getMarket(id: string): Promise<Market | undefined> {

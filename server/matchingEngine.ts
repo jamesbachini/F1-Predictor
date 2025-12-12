@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, or, desc, asc, sql, ne, lte, gte } from "drizzle-orm";
+import { eq, and, or, desc, asc, sql, ne, lte, gte, gt } from "drizzle-orm";
 import {
   orders,
   orderFills,
@@ -621,6 +621,77 @@ export class MatchingEngine {
       .update(markets)
       .set({ status: "settled" })
       .where(eq(markets.id, marketId));
+  }
+
+  async getYesShareHolders(marketId: string): Promise<{ userId: string; yesShares: number; walletAddress: string | null }[]> {
+    const result = await db
+      .select({
+        userId: marketPositions.userId,
+        yesShares: marketPositions.yesShares,
+        walletAddress: users.walletAddress,
+      })
+      .from(marketPositions)
+      .leftJoin(users, eq(marketPositions.userId, users.id))
+      .where(
+        and(
+          eq(marketPositions.marketId, marketId),
+          gt(marketPositions.yesShares, 0)
+        )
+      );
+    
+    return result.map(r => ({
+      userId: r.userId,
+      yesShares: r.yesShares,
+      walletAddress: r.walletAddress,
+    }));
+  }
+
+  async getMarketByTeamAndSeason(teamId: string, seasonId: string): Promise<Market | undefined> {
+    const [market] = await db
+      .select()
+      .from(markets)
+      .where(
+        and(
+          eq(markets.teamId, teamId),
+          eq(markets.seasonId, seasonId)
+        )
+      );
+    return market;
+  }
+
+  async freezeAllMarkets(seasonId: string): Promise<void> {
+    await db
+      .update(markets)
+      .set({ status: "frozen" })
+      .where(eq(markets.seasonId, seasonId));
+  }
+
+  async cancelAllOrdersForSeason(seasonId: string): Promise<number> {
+    const seasonMarkets = await db
+      .select()
+      .from(markets)
+      .where(eq(markets.seasonId, seasonId));
+    
+    let cancelledCount = 0;
+    for (const market of seasonMarkets) {
+      // Get all open orders for this market
+      const openOrders = await db
+        .select()
+        .from(orders)
+        .where(
+          and(
+            eq(orders.marketId, market.id),
+            or(eq(orders.status, "open"), eq(orders.status, "partial"))
+          )
+        );
+      
+      // Cancel each order using the existing cancelOrder logic to properly refund collateral
+      for (const order of openOrders) {
+        await this.cancelOrder(order.id, order.userId);
+        cancelledCount++;
+      }
+    }
+    return cancelledCount;
   }
 }
 

@@ -556,8 +556,16 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Team not found" });
       }
 
-      // Get current prize pool
-      const prizePool = await storage.getPrizePool();
+      // Freeze all CLOB markets
+      await matchingEngine.freezeAllMarkets(currentSeason.id);
+
+      // Cancel all open orders
+      const cancelledOrders = await matchingEngine.cancelAllOrdersForSeason(currentSeason.id);
+
+      // Get prize pool from locked collateral
+      const seasonMarkets = await storage.getMarketsBySeason(currentSeason.id);
+      const lockedCollateral = seasonMarkets.reduce((sum, m) => sum + (m.lockedCollateral || 0), 0);
+      const prizePool = lockedCollateral;
 
       // Conclude the season
       const updatedSeason = await storage.concludeSeason(
@@ -570,6 +578,7 @@ export async function registerRoutes(
         success: true, 
         season: updatedSeason,
         winningTeam,
+        cancelledOrders,
         prizePool 
       });
     } catch (error) {
@@ -598,26 +607,36 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Payouts already calculated", payouts: existingPayouts });
       }
 
-      // Get all holders of the winning team
-      const holders = await storage.getHoldersOfTeam(currentSeason.winningTeamId);
-      if (holders.length === 0) {
-        return res.json({ success: true, message: "No holders of winning team", payouts: [] });
+      // Get the market for the winning team
+      const winningMarket = await matchingEngine.getMarketByTeamAndSeason(
+        currentSeason.winningTeamId,
+        currentSeason.id
+      );
+      if (!winningMarket) {
+        return res.status(400).json({ error: "No market found for winning team" });
       }
 
-      // Calculate total shares held
-      const totalShares = holders.reduce((sum, h) => sum + h.shares, 0);
+      // Get all YES share holders from CLOB positions
+      const yesHolders = await matchingEngine.getYesShareHolders(winningMarket.id);
+      if (yesHolders.length === 0) {
+        return res.json({ success: true, message: "No YES share holders for winning team", payouts: [] });
+      }
+
+      // Calculate total YES shares held
+      const totalYesShares = yesHolders.reduce((sum, h) => sum + h.yesShares, 0);
 
       // Create payout records for each holder
+      // Each YES share pays $1
       const payouts = [];
-      for (const holder of holders) {
-        const sharePercentage = holder.shares / totalShares;
-        const payoutAmount = currentSeason.prizePool * sharePercentage;
+      for (const holder of yesHolders) {
+        const sharePercentage = holder.yesShares / totalYesShares;
+        const payoutAmount = holder.yesShares * 1; // $1 per YES share
 
         const payout = await storage.createPayout({
           seasonId: currentSeason.id,
           userId: holder.userId,
           teamId: currentSeason.winningTeamId,
-          sharesHeld: holder.shares,
+          sharesHeld: holder.yesShares,
           sharePercentage,
           payoutAmount,
           status: "pending",
@@ -627,7 +646,7 @@ export async function registerRoutes(
 
       res.json({ 
         success: true, 
-        totalShares,
+        totalShares: totalYesShares,
         prizePool: currentSeason.prizePool,
         payouts 
       });
