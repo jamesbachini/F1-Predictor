@@ -104,10 +104,12 @@ export class MarketMaker {
     const midPrice = market.lastPrice || 0.5;
     const adjustedMid = this.adjustMidForInventory(midPrice, netPosition);
 
+    // For trades to match: YES_price + NO_price >= 1.00
+    // So noBidPrice = 1 - yesBidPrice ensures instant matching
     const yesBidPrice = Math.max(MIN_PRICE, adjustedMid - DEFAULT_SPREAD / 2);
     const yesAskPrice = Math.min(MAX_PRICE, adjustedMid + DEFAULT_SPREAD / 2);
-    const noBidPrice = Math.max(MIN_PRICE, (1 - adjustedMid) - DEFAULT_SPREAD / 2);
-    const noAskPrice = Math.min(MAX_PRICE, (1 - adjustedMid) + DEFAULT_SPREAD / 2);
+    const noBidPrice = Math.max(MIN_PRICE, 1 - yesBidPrice); // Complement of YES bid
+    const noAskPrice = Math.min(MAX_PRICE, 1 - yesAskPrice); // Complement of YES ask
 
     const orderSize = this.calculateOrderSize(netPosition);
 
