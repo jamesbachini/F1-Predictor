@@ -259,9 +259,19 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
                 </div>
               </div>
             ) : (
-              <div className="text-sm text-muted-foreground">
-                <AlertCircle className="h-4 w-4 inline mr-2" />
-                Stellar deposit address not configured.
+              <div className="space-y-3">
+                <div className="text-sm text-muted-foreground">
+                  If you have XLM testnet tokens, you may add USDC as an asset in your wallet and perform a swap to get USDC tokens.
+                </div>
+                <a 
+                  href="#how-it-works" 
+                  className="text-sm text-primary hover:underline inline-flex items-center gap-1"
+                  onClick={() => onOpenChange(false)}
+                  data-testid="link-how-it-works"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  How it works
+                </a>
               </div>
             )}
           </div>

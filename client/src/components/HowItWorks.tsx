@@ -24,7 +24,7 @@ const steps = [
 
 export function HowItWorks() {
   return (
-    <section className="border-t bg-card/50 py-12">
+    <section id="how-it-works" className="border-t bg-card/50 py-12">
       <div className="mx-auto max-w-7xl px-4">
         <div className="mb-8 text-center">
           <h2 className="text-2xl font-bold" data-testid="text-how-it-works-title">How It Works</h2>
