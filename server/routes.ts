@@ -70,6 +70,14 @@ export async function registerRoutes(
     console.log("Seeded initial price history snapshots");
   }
 
+  // Auto-start market maker bot to provide liquidity
+  try {
+    await marketMaker.start(30000); // 30 second interval
+    console.log("Market maker bot auto-started for liquidity");
+  } catch (error) {
+    console.error("Failed to start market maker bot:", error);
+  }
+
   // ============ Teams/Market Routes ============
   
   // Get all teams
