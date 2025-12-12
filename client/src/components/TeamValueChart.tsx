@@ -23,8 +23,9 @@ interface PriceHistoryRecord {
 export function TeamValueChart() {
   const { teams } = useMarket();
 
+  // Use CLOB price history from order fills (reflects actual trade prices)
   const { data: priceHistory = [], isLoading } = useQuery<PriceHistoryRecord[]>({
-    queryKey: ["/api/market/price-history"],
+    queryKey: ["/api/clob/price-history"],
     refetchInterval: 30000,
   });
 

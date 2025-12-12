@@ -656,6 +656,18 @@ export async function registerRoutes(
     }
   });
 
+  // Get CLOB price history (from order fills)
+  app.get("/api/clob/price-history", async (req, res) => {
+    try {
+      const teamId = req.query.teamId as string | undefined;
+      const limit = parseInt(req.query.limit as string) || 500;
+      const history = await storage.getCLOBPriceHistory(teamId, limit);
+      res.json(history);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch CLOB price history" });
+    }
+  });
+
   // ============ Admin Authentication ============
 
   // Helper to check if wallet is admin

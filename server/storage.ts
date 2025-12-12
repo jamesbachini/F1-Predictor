@@ -1,5 +1,5 @@
 import { 
-  users, teams, holdings, transactions, deposits, priceHistory, seasons, payouts, markets,
+  users, teams, holdings, transactions, deposits, priceHistory, seasons, payouts, markets, orderFills,
   type User, type InsertUser, 
   type Team, type InsertTeam,
   type Holding, type InsertHolding,
@@ -13,7 +13,7 @@ import {
   type SellSharesRequest
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, asc, sql } from "drizzle-orm";
+import { eq, and, desc, asc, sql, inArray } from "drizzle-orm";
 
 export interface IStorage {
   // Users
@@ -77,6 +77,9 @@ export interface IStorage {
   createMarket(market: InsertMarket): Promise<Market>;
   createMarketsForSeason(seasonId: string): Promise<Market[]>;
   getMarketsBySeason(seasonId: string): Promise<Market[]>;
+  
+  // CLOB Price History
+  getCLOBPriceHistory(teamId?: string, limit?: number): Promise<{ id: string; teamId: string; price: number; recordedAt: string }[]>;
 }
 
 // Initial F1 2026 teams data - all teams start at equal $0.10 price
@@ -572,6 +575,56 @@ export class DatabaseStorage implements IStorage {
     }
     
     return createdMarkets;
+  }
+
+  // CLOB Price History - derives price history from order fills
+  // Returns chronologically ascending data for chart rendering
+  async getCLOBPriceHistory(teamId?: string, limit: number = 500): Promise<{ id: string; teamId: string; price: number; recordedAt: string }[]> {
+    // Get all markets with their team IDs
+    const allMarkets = await db.select({
+      marketId: markets.id,
+      teamId: markets.teamId,
+    }).from(markets);
+    
+    const marketToTeam = new Map(allMarkets.map(m => [m.marketId, m.teamId]));
+    
+    // Get order fills (each fill represents a trade with a price)
+    // Ordered ascending for chronological chart display
+    let fills;
+    if (teamId) {
+      // Filter by team via market using proper inArray helper
+      const marketIds = allMarkets.filter(m => m.teamId === teamId).map(m => m.marketId);
+      if (marketIds.length === 0) return [];
+      
+      fills = await db.select({
+        id: orderFills.id,
+        marketId: orderFills.marketId,
+        yesPrice: orderFills.yesPrice,
+        createdAt: orderFills.createdAt,
+      })
+      .from(orderFills)
+      .where(inArray(orderFills.marketId, marketIds))
+      .orderBy(asc(orderFills.createdAt))
+      .limit(limit);
+    } else {
+      fills = await db.select({
+        id: orderFills.id,
+        marketId: orderFills.marketId,
+        yesPrice: orderFills.yesPrice,
+        createdAt: orderFills.createdAt,
+      })
+      .from(orderFills)
+      .orderBy(asc(orderFills.createdAt))
+      .limit(limit);
+    }
+    
+    // Transform to price history format (yesPrice represents the team's win probability/price)
+    return fills.map(fill => ({
+      id: fill.id,
+      teamId: marketToTeam.get(fill.marketId) || "",
+      price: fill.yesPrice,
+      recordedAt: fill.createdAt.toISOString(),
+    })).filter(f => f.teamId);
   }
 }
 
