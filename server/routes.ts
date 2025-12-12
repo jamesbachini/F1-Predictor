@@ -973,5 +973,96 @@ export async function registerRoutes(
     }
   });
 
+  // ============ Simulation Routes (Admin) ============
+
+  // Simulate random trades for testing
+  app.post("/api/admin/simulate-trades", requireAdmin, async (req, res) => {
+    try {
+      const { 
+        marketId, 
+        numTrades = 10, 
+        minPrice = 0.20, 
+        maxPrice = 0.80 
+      } = req.body;
+
+      if (!marketId) {
+        return res.status(400).json({ error: "marketId is required" });
+      }
+
+      // Get or create simulation users
+      const simulationUserIds: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        const username = `sim_trader_${i}`;
+        let user = await storage.getUserByUsername(username);
+        if (!user) {
+          user = await storage.createUser({
+            username,
+            password: "simulation",
+          });
+          // Give simulation users initial balance
+          await storage.updateUserBalance(user.id, 10000);
+        }
+        simulationUserIds.push(user.id);
+      }
+
+      const results: Array<{
+        tradeNum: number;
+        userId: string;
+        outcome: string;
+        side: string;
+        price: number;
+        quantity: number;
+        success: boolean;
+        error?: string;
+      }> = [];
+
+      for (let i = 0; i < numTrades; i++) {
+        // Random user
+        const userId = simulationUserIds[Math.floor(Math.random() * simulationUserIds.length)];
+        
+        // Random parameters
+        const outcome = Math.random() > 0.5 ? "yes" : "no" as "yes" | "no";
+        const side = Math.random() > 0.5 ? "buy" : "sell" as "buy" | "sell";
+        const price = parseFloat((Math.random() * (maxPrice - minPrice) + minPrice).toFixed(2));
+        const quantity = Math.floor(Math.random() * 20) + 1;
+
+        try {
+          await matchingEngine.placeOrder(marketId, userId, outcome, side, price, quantity);
+          results.push({
+            tradeNum: i + 1,
+            userId,
+            outcome,
+            side,
+            price,
+            quantity,
+            success: true,
+          });
+        } catch (error: any) {
+          results.push({
+            tradeNum: i + 1,
+            userId,
+            outcome,
+            side,
+            price,
+            quantity,
+            success: false,
+            error: error.message,
+          });
+        }
+      }
+
+      const successCount = results.filter(r => r.success).length;
+      const failCount = results.filter(r => !r.success).length;
+
+      res.json({
+        success: true,
+        message: `Simulated ${numTrades} trades: ${successCount} successful, ${failCount} failed`,
+        results,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to simulate trades" });
+    }
+  });
+
   return httpServer;
 }
