@@ -11,6 +11,15 @@ interface SeasonResponse {
   status?: string;
 }
 
+interface CLOBMarket {
+  id: string;
+  teamId: string;
+  outstandingPairs: number;
+  lockedCollateral: number;
+  lastPrice: number | null;
+  status: string;
+}
+
 export function MarketOverview({ onBuyTeam }: MarketOverviewProps) {
   const { teams, getHolding } = useMarket();
 
@@ -18,8 +27,26 @@ export function MarketOverview({ onBuyTeam }: MarketOverviewProps) {
     queryKey: ["/api/season"],
   });
 
+  const { data: clobMarkets = [] } = useQuery<CLOBMarket[]>({
+    queryKey: ["/api/clob/markets"],
+    refetchInterval: 5000,
+  });
+
   const isTradingLocked = season?.exists && season.status === "concluded";
-  const sortedTeams = [...teams].sort((a, b) => b.price - a.price);
+
+  // Merge CLOB market prices into teams
+  const teamsWithClobPrices = teams.map((team) => {
+    const market = clobMarkets.find((m) => m.teamId === team.id);
+    if (market && market.lastPrice !== null) {
+      return {
+        ...team,
+        price: market.lastPrice,
+      };
+    }
+    return team;
+  });
+
+  const sortedTeams = [...teamsWithClobPrices].sort((a, b) => b.price - a.price);
 
   return (
     <section className="py-12">
