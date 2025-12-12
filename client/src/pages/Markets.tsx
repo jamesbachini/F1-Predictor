@@ -195,13 +195,13 @@ export default function Markets() {
                       <div className="rounded-md bg-green-500/10 p-2 text-center">
                         <p className="text-xs text-muted-foreground mb-1">YES Price</p>
                         <p className="text-lg font-bold text-green-600 dark:text-green-400" data-testid={`text-yes-price-${team.id}`}>
-                          ${(market.lastPrice || 0.5).toFixed(2)}
+                          {market.lastPrice != null ? `$${market.lastPrice.toFixed(2)}` : "--"}
                         </p>
                       </div>
                       <div className="rounded-md bg-red-500/10 p-2 text-center">
                         <p className="text-xs text-muted-foreground mb-1">NO Price</p>
                         <p className="text-lg font-bold text-red-600 dark:text-red-400" data-testid={`text-no-price-${team.id}`}>
-                          ${(1 - (market.lastPrice || 0.5)).toFixed(2)}
+                          {market.lastPrice != null ? `$${(1 - market.lastPrice).toFixed(2)}` : "--"}
                         </p>
                       </div>
                     </div>
