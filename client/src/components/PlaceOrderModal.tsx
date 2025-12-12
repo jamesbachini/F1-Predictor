@@ -141,19 +141,32 @@ export function PlaceOrderModal({
       }
       
       // Step 2: Sign with Freighter
-      const { signTransaction } = await import("@stellar/freighter-api");
+      const { signTransaction, isConnected } = await import("@stellar/freighter-api");
+      
+      const connected = await isConnected();
+      if (!connected) {
+        throw new Error("Freighter wallet extension not detected. Please install Freighter and refresh the page.");
+      }
       
       toast({
         title: "Sign Transaction",
         description: `Please sign the transaction for $${buildResult.collateralAmount.toFixed(2)} USDC`,
       });
       
-      const signResult = await signTransaction(buildResult.xdr, {
-        networkPassphrase: buildResult.networkPassphrase,
-      });
+      let signResult;
+      try {
+        signResult = await signTransaction(buildResult.xdr, {
+          networkPassphrase: buildResult.networkPassphrase,
+        });
+      } catch (signError: any) {
+        if (signError?.message?.includes("User declined")) {
+          throw new Error("Transaction was declined. Please try again and approve the transaction in Freighter.");
+        }
+        throw new Error(`Freighter signing error: ${signError?.message || "Unknown error"}`);
+      }
       
       if (!signResult.signedTxXdr) {
-        throw new Error("Transaction signing was cancelled");
+        throw new Error("Transaction signing was cancelled or failed. Please try again.");
       }
       
       // Step 3: Submit signed transaction with server-generated nonce
@@ -292,11 +305,14 @@ export function PlaceOrderModal({
               <Label htmlFor="quantity">Quantity</Label>
               <Input
                 id="quantity"
-                type="number"
-                step="1"
-                min="1"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 value={quantity}
-                onChange={(e) => setQuantity(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (/^\d*$/.test(val)) setQuantity(val);
+                }}
                 data-testid="input-quantity"
               />
               <p className="text-xs text-muted-foreground">
