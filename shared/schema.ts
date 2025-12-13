@@ -33,6 +33,24 @@ export const teams = pgTable("teams", {
 export const teamsRelations = relations(teams, ({ many }) => ({
   holdings: many(holdings),
   transactions: many(transactions),
+  drivers: many(drivers),
+}));
+
+// F1 Drivers table - the 20+ drivers users can bet on in Driver Championship
+export const drivers = pgTable("drivers", {
+  id: varchar("id").primaryKey(),
+  name: text("name").notNull(),
+  shortName: text("short_name").notNull(),
+  teamId: varchar("team_id").notNull().references(() => teams.id),
+  number: integer("number").notNull(),
+  color: text("color").notNull(),
+});
+
+export const driversRelations = relations(drivers, ({ one }) => ({
+  team: one(teams, {
+    fields: [drivers.teamId],
+    references: [teams.id],
+  }),
 }));
 
 // Holdings - tracks which users own shares in which teams
@@ -168,6 +186,8 @@ export const insertUserSchema = createInsertSchema(users).pick({
 
 export const insertTeamSchema = createInsertSchema(teams);
 
+export const insertDriverSchema = createInsertSchema(drivers);
+
 export const insertHoldingSchema = createInsertSchema(holdings).omit({
   id: true,
 });
@@ -204,11 +224,13 @@ export const insertPayoutSchema = createInsertSchema(payouts).omit({
 // CLOB (Central Limit Order Book) Tables
 // =====================================================
 
-// Markets - One per team/season, tracks collateral and outstanding pairs
+// Markets - One per team or driver per season, tracks collateral and outstanding pairs
 export const markets = pgTable("markets", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   seasonId: varchar("season_id").notNull().references(() => seasons.id),
-  teamId: varchar("team_id").notNull().references(() => teams.id),
+  teamId: varchar("team_id").references(() => teams.id),
+  driverId: varchar("driver_id").references(() => drivers.id),
+  marketType: text("market_type").notNull().default("team"), // 'team' or 'driver'
   outstandingPairs: integer("outstanding_pairs").notNull().default(0),
   lockedCollateral: real("locked_collateral").notNull().default(0),
   lastPrice: real("last_price").default(0.5),
@@ -219,6 +241,7 @@ export const markets = pgTable("markets", {
 export const marketsRelations = relations(markets, ({ one, many }) => ({
   season: one(seasons, { fields: [markets.seasonId], references: [seasons.id] }),
   team: one(teams, { fields: [markets.teamId], references: [teams.id] }),
+  driver: one(drivers, { fields: [markets.driverId], references: [drivers.id] }),
   orders: many(orders),
   positions: many(marketPositions),
 }));
@@ -383,6 +406,8 @@ export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 export type InsertTeam = z.infer<typeof insertTeamSchema>;
 export type Team = typeof teams.$inferSelect;
+export type InsertDriver = z.infer<typeof insertDriverSchema>;
+export type Driver = typeof drivers.$inferSelect;
 export type InsertHolding = z.infer<typeof insertHoldingSchema>;
 export type Holding = typeof holdings.$inferSelect;
 export type InsertTransaction = z.infer<typeof insertTransactionSchema>;

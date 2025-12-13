@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { TrendingUp, TrendingDown, Wallet, PiggyBank, BarChart3, Loader2 } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, PiggyBank, BarChart3, Loader2, Clock, CheckCircle, XCircle, AlertCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -51,6 +51,19 @@ interface SellModalState {
   currentPrice: number;
 }
 
+interface Order {
+  id: string;
+  marketId: string;
+  userId: string;
+  side: "buy" | "sell";
+  outcome: "yes" | "no";
+  price: number;
+  quantity: number;
+  filledQuantity: number;
+  status: "open" | "filled" | "partial" | "cancelled";
+  createdAt: string;
+}
+
 export function PortfolioSection() {
   const { teams, userId } = useMarket();
   const { walletAddress } = useWallet();
@@ -77,6 +90,11 @@ export function PortfolioSection() {
 
   const { data: markets = [] } = useQuery<Market[]>({
     queryKey: ["/api/clob/markets"],
+  });
+
+  const { data: orders = [], isLoading: isLoadingOrders } = useQuery<Order[]>({
+    queryKey: ["/api/clob/users", userId, "orders"],
+    enabled: !!userId,
   });
 
   const sellMutation = useMutation({
@@ -384,6 +402,70 @@ export function PortfolioSection() {
                           style={{ width: `${Math.min(100, percentOfPortfolio)}%` }}
                         />
                       </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle>Order History</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {isLoadingOrders ? (
+              <div className="py-8 flex justify-center">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : orders.length === 0 ? (
+              <p className="py-8 text-center text-muted-foreground">
+                No orders placed yet.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {orders.slice(0, 20).map((order) => {
+                  const team = getTeamForMarket(order.marketId);
+                  const statusIcon = {
+                    open: <Clock className="h-4 w-4" />,
+                    filled: <CheckCircle className="h-4 w-4" />,
+                    partial: <AlertCircle className="h-4 w-4" />,
+                    cancelled: <XCircle className="h-4 w-4" />,
+                  }[order.status];
+                  const statusVariant = {
+                    open: "secondary" as const,
+                    filled: "default" as const,
+                    partial: "outline" as const,
+                    cancelled: "destructive" as const,
+                  }[order.status];
+
+                  return (
+                    <div 
+                      key={order.id} 
+                      className="flex items-center justify-between gap-4 p-3 rounded-md bg-muted/50 flex-wrap"
+                      data-testid={`order-row-${order.id}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        {team && (
+                          <div
+                            className="h-3 w-3 rounded-full"
+                            style={{ backgroundColor: team.color }}
+                          />
+                        )}
+                        <div>
+                          <p className="font-medium text-sm">
+                            {order.side.toUpperCase()} {order.quantity} {order.outcome.toUpperCase()} @ ${order.price.toFixed(2)}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {team?.name || "Unknown"} - Filled: {order.filledQuantity}/{order.quantity}
+                          </p>
+                        </div>
+                      </div>
+                      <Badge variant={statusVariant} className="gap-1">
+                        {statusIcon}
+                        {order.status}
+                      </Badge>
                     </div>
                   );
                 })}

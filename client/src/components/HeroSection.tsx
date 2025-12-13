@@ -46,7 +46,15 @@ export function HeroSection({ onStartTrading }: HeroSectionProps) {
                 Start Trading
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
-              <Button size="lg" variant="outline" className="border-white/30 bg-white/10 text-white backdrop-blur-sm" data-testid="button-learn-more">
+              <Button 
+                size="lg" 
+                variant="outline" 
+                className="border-white/30 bg-white/10 text-white backdrop-blur-sm" 
+                data-testid="button-learn-more"
+                onClick={() => {
+                  document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth" });
+                }}
+              >
                 How It Works
               </Button>
             </div>

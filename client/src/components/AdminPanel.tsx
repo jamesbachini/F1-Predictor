@@ -14,10 +14,15 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import { useMarket } from "@/context/MarketContext";
 import { useWallet } from "@/context/WalletContext";
-import { Trophy, Play, CheckCircle, AlertCircle, DollarSign, Lock, Bot, Power, PowerOff } from "lucide-react";
+import { Trophy, Play, CheckCircle, AlertCircle, DollarSign, Lock, Bot, Power, PowerOff, Users } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import type { Payout } from "@shared/schema";
+
+interface DriverMarketsStatus {
+  exists: boolean;
+  count: number;
+}
 
 interface SeasonResponse {
   exists: boolean;
@@ -106,6 +111,33 @@ export function AdminPanel() {
       return adminApiRequest(payoutsQueryKey, "GET");
     },
     enabled: !!payoutsQueryKey && season?.status === "concluded",
+  });
+
+  const { data: driverMarketsStatus } = useQuery<DriverMarketsStatus>({
+    queryKey: ["/api/clob/driver-markets"],
+    queryFn: async () => {
+      const res = await fetch("/api/clob/driver-markets");
+      if (!res.ok) return { exists: false, count: 0 };
+      const markets = await res.json();
+      return { exists: markets.length > 0, count: markets.length };
+    },
+    enabled: !!season?.exists && season.status === "active",
+  });
+
+  const createDriverMarketsMutation = useMutation({
+    mutationFn: async () => {
+      return adminApiRequest("/api/admin/driver-markets/create", "POST", {});
+    },
+    onSuccess: (data: any) => {
+      toast({ 
+        title: "Driver Markets Created", 
+        description: `Created ${data.markets?.length || 0} driver markets for ${data.season?.year || 2026} season.` 
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/clob/driver-markets"] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message || "Failed to create driver markets", variant: "destructive" });
+    },
   });
 
   const createSeasonMutation = useMutation({
@@ -258,6 +290,39 @@ export function AdminPanel() {
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <CheckCircle className="h-4 w-4 text-green-500" />
               <span>Season {season.year} is active. Trading is open.</span>
+            </div>
+
+            <div className="border rounded-md p-4 space-y-3">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  <Users className="h-5 w-5 text-muted-foreground" />
+                  <div>
+                    <p className="font-medium">Driver Championship Markets</p>
+                    <p className="text-sm text-muted-foreground">
+                      {driverMarketsStatus?.exists 
+                        ? `${driverMarketsStatus.count} driver markets active`
+                        : "Create markets for driver championship predictions"}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  {driverMarketsStatus?.exists ? (
+                    <Badge variant="default">
+                      <CheckCircle className="h-3 w-3 mr-1" /> Active
+                    </Badge>
+                  ) : (
+                    <Button
+                      size="sm"
+                      onClick={() => createDriverMarketsMutation.mutate()}
+                      disabled={createDriverMarketsMutation.isPending}
+                      data-testid="button-create-driver-markets"
+                    >
+                      <Play className="h-4 w-4 mr-2" />
+                      {createDriverMarketsMutation.isPending ? "Creating..." : "Create Driver Markets"}
+                    </Button>
+                  )}
+                </div>
+              </div>
             </div>
             
             <div className="border rounded-md p-4 space-y-3">

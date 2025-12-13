@@ -1,7 +1,8 @@
 import { 
-  users, teams, holdings, transactions, deposits, priceHistory, seasons, payouts, markets, orderFills,
+  users, teams, drivers, holdings, transactions, deposits, priceHistory, seasons, payouts, markets, orderFills,
   type User, type InsertUser, 
   type Team, type InsertTeam,
+  type Driver, type InsertDriver,
   type Holding, type InsertHolding,
   type Transaction, type InsertTransaction,
   type Deposit, type InsertDeposit,
@@ -29,6 +30,13 @@ export interface IStorage {
   createTeam(team: InsertTeam): Promise<Team>;
   updateTeam(id: string, updates: Partial<Team>): Promise<Team | undefined>;
   seedTeams(): Promise<void>;
+  
+  // Drivers
+  getDrivers(): Promise<Driver[]>;
+  getDriver(id: string): Promise<Driver | undefined>;
+  getDriversByTeam(teamId: string): Promise<Driver[]>;
+  createDriver(driver: InsertDriver): Promise<Driver>;
+  seedDrivers(): Promise<void>;
   
   // Holdings
   getHoldingsByUser(userId: string): Promise<Holding[]>;
@@ -76,7 +84,9 @@ export interface IStorage {
   getMarket(id: string): Promise<Market | undefined>;
   createMarket(market: InsertMarket): Promise<Market>;
   createMarketsForSeason(seasonId: string): Promise<Market[]>;
+  createDriverMarketsForSeason(seasonId: string): Promise<Market[]>;
   getMarketsBySeason(seasonId: string): Promise<Market[]>;
+  getMarketsByType(seasonId: string, marketType: 'team' | 'driver'): Promise<Market[]>;
   
   // CLOB Price History
   getCLOBPriceHistory(teamId?: string, limit?: number): Promise<{ id: string; teamId: string; price: number; recordedAt: string }[]>;
@@ -95,6 +105,43 @@ const initialTeams: InsertTeam[] = [
   { id: "audi", name: "Audi F1 Team", shortName: "AUD", color: "#FF0000", price: 0.10, priceChange: 0, totalShares: 10000, availableShares: 10000 },
   { id: "haas", name: "Haas F1 Team", shortName: "HAS", color: "#B6BABD", price: 0.10, priceChange: 0, totalShares: 10000, availableShares: 10000 },
   { id: "cadillac", name: "Cadillac F1 Team", shortName: "CAD", color: "#C4A747", price: 0.10, priceChange: 0, totalShares: 10000, availableShares: 10000 },
+];
+
+// Initial F1 2026 drivers data - confirmed driver lineup
+const initialDrivers: InsertDriver[] = [
+  // Red Bull Racing
+  { id: "verstappen", name: "Max Verstappen", shortName: "VER", teamId: "redbull", number: 1, color: "#1E41FF" },
+  { id: "lawson", name: "Liam Lawson", shortName: "LAW", teamId: "redbull", number: 30, color: "#1E41FF" },
+  // Ferrari
+  { id: "leclerc", name: "Charles Leclerc", shortName: "LEC", teamId: "ferrari", number: 16, color: "#DC0000" },
+  { id: "hamilton", name: "Lewis Hamilton", shortName: "HAM", teamId: "ferrari", number: 44, color: "#DC0000" },
+  // Mercedes
+  { id: "russell", name: "George Russell", shortName: "RUS", teamId: "mercedes", number: 63, color: "#00D2BE" },
+  { id: "antonelli", name: "Andrea Kimi Antonelli", shortName: "ANT", teamId: "mercedes", number: 12, color: "#00D2BE" },
+  // McLaren
+  { id: "norris", name: "Lando Norris", shortName: "NOR", teamId: "mclaren", number: 4, color: "#FF8700" },
+  { id: "piastri", name: "Oscar Piastri", shortName: "PIA", teamId: "mclaren", number: 81, color: "#FF8700" },
+  // Aston Martin
+  { id: "alonso", name: "Fernando Alonso", shortName: "ALO", teamId: "astonmartin", number: 14, color: "#006F62" },
+  { id: "stroll", name: "Lance Stroll", shortName: "STR", teamId: "astonmartin", number: 18, color: "#006F62" },
+  // Alpine
+  { id: "gasly", name: "Pierre Gasly", shortName: "GAS", teamId: "alpine", number: 10, color: "#0090FF" },
+  { id: "doohan", name: "Jack Doohan", shortName: "DOO", teamId: "alpine", number: 5, color: "#0090FF" },
+  // Williams
+  { id: "albon", name: "Alex Albon", shortName: "ALB", teamId: "williams", number: 23, color: "#005AFF" },
+  { id: "sainz", name: "Carlos Sainz", shortName: "SAI", teamId: "williams", number: 55, color: "#005AFF" },
+  // RB (Visa Cash App RB)
+  { id: "tsunoda", name: "Yuki Tsunoda", shortName: "TSU", teamId: "rb", number: 22, color: "#2B4562" },
+  { id: "hadjar", name: "Isack Hadjar", shortName: "HAD", teamId: "rb", number: 6, color: "#2B4562" },
+  // Audi (formerly Sauber)
+  { id: "hulkenberg", name: "Nico Hulkenberg", shortName: "HUL", teamId: "audi", number: 27, color: "#FF0000" },
+  { id: "bortoleto", name: "Gabriel Bortoleto", shortName: "BOR", teamId: "audi", number: 49, color: "#FF0000" },
+  // Haas
+  { id: "ocon", name: "Esteban Ocon", shortName: "OCO", teamId: "haas", number: 31, color: "#B6BABD" },
+  { id: "bearman", name: "Oliver Bearman", shortName: "BEA", teamId: "haas", number: 87, color: "#B6BABD" },
+  // Cadillac (placeholder drivers for new entry)
+  { id: "cadillac_driver1", name: "TBD Driver 1", shortName: "TBD", teamId: "cadillac", number: 98, color: "#C4A747" },
+  { id: "cadillac_driver2", name: "TBD Driver 2", shortName: "TBD", teamId: "cadillac", number: 99, color: "#C4A747" },
 ];
 
 export class DatabaseStorage implements IStorage {
@@ -161,6 +208,34 @@ export class DatabaseStorage implements IStorage {
     if (existingTeams.length === 0) {
       for (const team of initialTeams) {
         await this.createTeam(team);
+      }
+    }
+  }
+
+  // Drivers
+  async getDrivers(): Promise<Driver[]> {
+    return await db.select().from(drivers);
+  }
+
+  async getDriver(id: string): Promise<Driver | undefined> {
+    const [driver] = await db.select().from(drivers).where(eq(drivers.id, id));
+    return driver || undefined;
+  }
+
+  async getDriversByTeam(teamId: string): Promise<Driver[]> {
+    return await db.select().from(drivers).where(eq(drivers.teamId, teamId));
+  }
+
+  async createDriver(driver: InsertDriver): Promise<Driver> {
+    const [newDriver] = await db.insert(drivers).values(driver).returning();
+    return newDriver;
+  }
+
+  async seedDrivers(): Promise<void> {
+    const existingDrivers = await this.getDrivers();
+    if (existingDrivers.length === 0) {
+      for (const driver of initialDrivers) {
+        await this.createDriver(driver);
       }
     }
   }
@@ -566,6 +641,8 @@ export class DatabaseStorage implements IStorage {
       const market = await this.createMarket({
         seasonId,
         teamId: team.id,
+        driverId: null,
+        marketType: "team",
         outstandingPairs: 0,
         lockedCollateral: 0,
         lastPrice: 0.5,
@@ -575,6 +652,33 @@ export class DatabaseStorage implements IStorage {
     }
     
     return createdMarkets;
+  }
+
+  async createDriverMarketsForSeason(seasonId: string): Promise<Market[]> {
+    const allDrivers = await this.getDrivers();
+    const createdMarkets: Market[] = [];
+    
+    for (const driver of allDrivers) {
+      const market = await this.createMarket({
+        seasonId,
+        teamId: null,
+        driverId: driver.id,
+        marketType: "driver",
+        outstandingPairs: 0,
+        lockedCollateral: 0,
+        lastPrice: 0.5,
+        status: "active",
+      });
+      createdMarkets.push(market);
+    }
+    
+    return createdMarkets;
+  }
+
+  async getMarketsByType(seasonId: string, marketType: 'team' | 'driver'): Promise<Market[]> {
+    return await db.select().from(markets).where(
+      and(eq(markets.seasonId, seasonId), eq(markets.marketType, marketType))
+    );
   }
 
   // CLOB Price History - derives price history from order fills

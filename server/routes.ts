@@ -62,6 +62,7 @@ export async function registerRoutes(
 ): Promise<Server> {
   // Seed teams on startup
   await storage.seedTeams();
+  await storage.seedDrivers();
   
   // Record initial price snapshots if no history exists
   const existingHistory = await storage.getPriceHistory(undefined, 1);
@@ -100,6 +101,41 @@ export async function registerRoutes(
       res.json(team);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch team" });
+    }
+  });
+
+  // ============ Drivers Routes ============
+  
+  // Get all drivers
+  app.get("/api/drivers", async (req, res) => {
+    try {
+      const drivers = await storage.getDrivers();
+      res.json(drivers);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch drivers" });
+    }
+  });
+
+  // Get single driver
+  app.get("/api/drivers/:id", async (req, res) => {
+    try {
+      const driver = await storage.getDriver(req.params.id);
+      if (!driver) {
+        return res.status(404).json({ error: "Driver not found" });
+      }
+      res.json(driver);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch driver" });
+    }
+  });
+
+  // Get drivers by team
+  app.get("/api/teams/:teamId/drivers", async (req, res) => {
+    try {
+      const drivers = await storage.getDriversByTeam(req.params.teamId);
+      res.json(drivers);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch drivers for team" });
     }
   });
 
@@ -435,6 +471,34 @@ export async function registerRoutes(
     }
   });
 
+  // Get team markets for current season
+  app.get("/api/clob/team-markets", async (req, res) => {
+    try {
+      const season = await storage.getCurrentSeason();
+      if (!season) {
+        return res.json([]);
+      }
+      const markets = await storage.getMarketsByType(season.id, "team");
+      res.json(markets);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch team markets" });
+    }
+  });
+
+  // Get driver markets for current season
+  app.get("/api/clob/driver-markets", async (req, res) => {
+    try {
+      const season = await storage.getCurrentSeason();
+      if (!season) {
+        return res.json([]);
+      }
+      const markets = await storage.getMarketsByType(season.id, "driver");
+      res.json(markets);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch driver markets" });
+    }
+  });
+
   // Get market by ID
   app.get("/api/clob/markets/:marketId", async (req, res) => {
     try {
@@ -734,6 +798,40 @@ export async function registerRoutes(
       res.json({ ...season, markets });
     } catch (error) {
       res.status(500).json({ error: "Failed to create season" });
+    }
+  });
+
+  // Create driver markets for existing season (admin)
+  app.post("/api/admin/driver-markets/create", requireAdmin, async (req, res) => {
+    try {
+      const currentSeason = await storage.getCurrentSeason();
+      if (!currentSeason) {
+        return res.status(400).json({ error: "No active season found. Create a season first." });
+      }
+      if (currentSeason.status !== "active") {
+        return res.status(400).json({ error: "Season is not active" });
+      }
+
+      // Check if driver markets already exist for this season
+      const existingDriverMarkets = await storage.getMarketsByType(currentSeason.id, "driver");
+      if (existingDriverMarkets.length > 0) {
+        return res.status(400).json({ 
+          error: "Driver markets already exist for this season",
+          markets: existingDriverMarkets 
+        });
+      }
+
+      // Create driver markets
+      const driverMarkets = await storage.createDriverMarketsForSeason(currentSeason.id);
+      
+      res.json({ 
+        success: true, 
+        seasonId: currentSeason.id,
+        marketsCreated: driverMarkets.length,
+        markets: driverMarkets 
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create driver markets" });
     }
   });
 
