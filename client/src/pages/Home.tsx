@@ -12,11 +12,13 @@ import { useWallet } from "@/context/WalletContext";
 import { useMarket } from "@/context/MarketContext";
 import { AlertCircle, Trophy } from "lucide-react";
 import type { F1Team } from "@/context/MarketContext";
+import type { Driver } from "@/components/DriverCard";
 
 interface Market {
   id: string;
-  seasonId: string;
-  teamId: string;
+  seasonId?: string;
+  teamId?: string;
+  driverId?: string;
   outstandingPairs: number;
   lockedCollateral: number;
   lastPrice: number | null;
@@ -41,7 +43,8 @@ export default function Home() {
   const { walletAddress } = useWallet();
   const { teams, userId } = useMarket();
   const [selectedTeam, setSelectedTeam] = useState<F1Team | null>(null);
-  const [selectedMarket, setSelectedMarket] = useState<Market | null>(null);
+  const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
+  const [selectedMarket, setSelectedMarket] = useState<Market | DriverMarket | null>(null);
   const [orderModalOpen, setOrderModalOpen] = useState(false);
   const [connectWalletModalOpen, setConnectWalletModalOpen] = useState(false);
 
@@ -53,6 +56,10 @@ export default function Home() {
     queryKey: ["/api/clob/markets"],
   });
 
+  const { data: driverMarkets = [] } = useQuery<Market[]>({
+    queryKey: ["/api/clob/driver-markets"],
+  });
+
   const { data: usdcBalance } = useQuery<USDCBalanceResponse>({
     queryKey: ["/api/stellar/balance", walletAddress],
     enabled: !!walletAddress,
@@ -62,6 +69,10 @@ export default function Home() {
 
   const getMarketForTeam = (teamId: string) => {
     return markets.find((m) => m.teamId === teamId);
+  };
+
+  const getMarketForDriver = (driverId: string) => {
+    return driverMarkets.find((m) => m.driverId === driverId);
   };
 
   const isSeasonConcluded = season?.exists && season.status === "concluded";
@@ -81,7 +92,26 @@ export default function Home() {
     if (!market) {
       return;
     }
+    setSelectedDriver(null);
     setSelectedTeam(team);
+    setSelectedMarket(market);
+    setOrderModalOpen(true);
+  };
+
+  const handleBuyDriver = (driver: Driver) => {
+    if (isSeasonConcluded) {
+      return;
+    }
+    if (!walletAddress) {
+      setConnectWalletModalOpen(true);
+      return;
+    }
+    const market = getMarketForDriver(driver.id);
+    if (!market) {
+      return;
+    }
+    setSelectedTeam(null);
+    setSelectedDriver(driver);
     setSelectedMarket(market);
     setOrderModalOpen(true);
   };
@@ -114,7 +144,7 @@ export default function Home() {
       
       <HeroSection onStartTrading={handleStartTrading} />
       <div id="market-section">
-        <MarketOverview onBuyTeam={handleBuyTeam} />
+        <MarketOverview onBuyTeam={handleBuyTeam} onBuyDriver={handleBuyDriver} />
       </div>
       <section className="py-8">
         <div className="mx-auto max-w-7xl px-4">
@@ -124,17 +154,18 @@ export default function Home() {
       <HowItWorks />
       <MarketStats />
 
-      {selectedMarket && selectedTeam && userId && (
+      {selectedMarket && (selectedTeam || selectedDriver) && userId && (
         <PlaceOrderModal
           open={orderModalOpen}
           onClose={() => {
             setOrderModalOpen(false);
             setSelectedMarket(null);
             setSelectedTeam(null);
+            setSelectedDriver(null);
           }}
           market={selectedMarket}
-          teamName={selectedTeam.name}
-          teamColor={selectedTeam.color}
+          teamName={selectedTeam?.name || selectedDriver?.name || ""}
+          teamColor={selectedTeam?.color || selectedDriver?.color || "#888"}
           userId={userId}
           userBalance={walletUsdcBalance}
         />
