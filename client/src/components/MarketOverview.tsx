@@ -16,15 +16,24 @@ interface SeasonResponse {
   status?: string;
 }
 
-interface CLOBMarket {
+interface PoolOutcome {
   id: string;
-  teamId: string | null;
-  driverId: string | null;
-  marketType: string;
-  outstandingPairs: number;
-  lockedCollateral: number;
-  lastPrice: number | null;
+  poolId: string;
+  participantId: string;
+  participantName: string;
+  sharesOutstanding: number;
+  price: number;
+  probability: number;
+}
+
+interface ChampionshipPool {
+  id: string;
+  seasonId: string;
+  type: "team" | "driver";
   status: string;
+  bParameter: number;
+  totalCollateral: number;
+  outcomes: PoolOutcome[];
 }
 
 interface DriverFromAPI {
@@ -44,8 +53,14 @@ export function MarketOverview({ onBuyTeam, onBuyDriver }: MarketOverviewProps) 
     queryKey: ["/api/season"],
   });
 
-  const { data: clobMarkets = [] } = useQuery<CLOBMarket[]>({
-    queryKey: ["/api/clob/markets"],
+  // Fetch pool pricing from LMSR pools
+  const { data: teamPool } = useQuery<ChampionshipPool>({
+    queryKey: ["/api/pools/type/team"],
+    refetchInterval: 5000,
+  });
+
+  const { data: driverPool } = useQuery<ChampionshipPool>({
+    queryKey: ["/api/pools/type/driver"],
     refetchInterval: 5000,
   });
 
@@ -53,33 +68,29 @@ export function MarketOverview({ onBuyTeam, onBuyDriver }: MarketOverviewProps) 
     queryKey: ["/api/drivers"],
   });
 
-  const { data: driverMarkets = [] } = useQuery<CLOBMarket[]>({
-    queryKey: ["/api/clob/driver-markets"],
-    refetchInterval: 5000,
-  });
-
   const isTradingLocked = season?.exists && season.status === "concluded";
 
-  // Merge CLOB market prices into teams
-  const teamsWithClobPrices = teams.map((team) => {
-    const market = clobMarkets.find((m) => m.teamId === team.id);
-    if (market && market.lastPrice !== null) {
+  // Merge pool prices into teams (LMSR pricing)
+  const teamsWithPoolPrices = teams.map((team) => {
+    const outcome = teamPool?.outcomes?.find((o) => o.participantId === team.id);
+    if (outcome) {
       return {
         ...team,
-        price: market.lastPrice,
+        price: outcome.price,
+        priceChange: 0, // Pool prices are probabilities, no historical change tracking yet
       };
     }
     return team;
   });
 
-  const sortedTeams = [...teamsWithClobPrices].sort((a, b) => b.price - a.price);
+  const sortedTeams = [...teamsWithPoolPrices].sort((a, b) => b.price - a.price);
 
-  // Merge CLOB driver market prices into drivers
+  // Merge pool prices into drivers (LMSR pricing)
   const driversWithPrices: Driver[] = driversFromAPI.map((driver) => {
-    const market = driverMarkets.find((m) => m.driverId === driver.id);
+    const outcome = driverPool?.outcomes?.find((o) => o.participantId === driver.id);
     return {
       ...driver,
-      price: market?.lastPrice ?? 0.10,
+      price: outcome?.price ?? 0.10,
       priceChange: 0,
     };
   });

@@ -80,6 +80,34 @@ export async function registerRoutes(
     console.error("Failed to start market maker bot:", error);
   }
 
+  // Initialize championship pools for current season if they don't exist
+  try {
+    const currentSeason = await storage.getCurrentSeason();
+    if (currentSeason && currentSeason.status === "active") {
+      const existingTeamPool = await storage.getChampionshipPoolByType(currentSeason.id, "team");
+      const existingDriverPool = await storage.getChampionshipPoolByType(currentSeason.id, "driver");
+      
+      if (!existingTeamPool || !existingDriverPool) {
+        // Verify teams and drivers are seeded before pool initialization
+        const teams = await storage.getTeams();
+        const drivers = await storage.getDrivers();
+        
+        if (teams.length === 0) {
+          console.error("Cannot initialize pools: No teams found. Ensure seedTeams() ran successfully.");
+        } else if (drivers.length === 0) {
+          console.error("Cannot initialize pools: No drivers found. Ensure seedDrivers() ran successfully.");
+        } else {
+          const { teamPool, driverPool } = await storage.initializePoolsForSeason(currentSeason.id);
+          console.log("Initialized championship pools for season:", currentSeason.id);
+          console.log("  Team pool:", teamPool.id, `(${teams.length} outcomes)`);
+          console.log("  Driver pool:", driverPool.id, `(${drivers.length} outcomes)`);
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Failed to initialize championship pools:", error);
+  }
+
   // Register LMSR pool routes
   registerPoolRoutes(app);
 
@@ -464,7 +492,11 @@ export async function registerRoutes(
   });
 
   // ============ CLOB (Central Limit Order Book) Routes ============
+  // @deprecated - CLOB system is legacy. Use /api/pools/* endpoints instead.
+  // The LMSR pool system (pool-routes.ts) is the active trading system.
+  // These endpoints are maintained for backward compatibility only.
 
+  // @deprecated - Use /api/pools/team-pool or /api/pools/driver-pool instead
   // Get all markets
   app.get("/api/clob/markets", async (req, res) => {
     try {
@@ -799,7 +831,14 @@ export async function registerRoutes(
       // Create CLOB markets for each team
       const markets = await storage.createMarketsForSeason(season.id);
       
-      res.json({ ...season, markets });
+      // Initialize LMSR championship pools for team and driver betting
+      const { teamPool, driverPool } = await storage.initializePoolsForSeason(season.id);
+      
+      res.json({ 
+        ...season, 
+        markets,
+        pools: { teamPool, driverPool }
+      });
     } catch (error) {
       res.status(500).json({ error: "Failed to create season" });
     }

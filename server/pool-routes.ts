@@ -18,7 +18,10 @@ import {
   getUSDCBalance, 
   buildUSDCPaymentTransaction, 
   verifySignedTransaction, 
-  submitSignedTransaction 
+  submitSignedTransaction,
+  sendUSDCPayment,
+  hasUSDCTrustline,
+  getPlatformAddress
 } from "./stellar";
 import { randomBytes } from "crypto";
 
@@ -462,6 +465,278 @@ export function registerPoolRoutes(app: Express): void {
       });
     } catch (error) {
       res.status(500).json({ error: "Failed to initialize pools" });
+    }
+  });
+
+  // Conclude a pool and declare winning outcome (admin endpoint)
+  app.post("/api/pools/:poolId/conclude", async (req, res) => {
+    try {
+      const { poolId } = req.params;
+      const { winningOutcomeId } = req.body;
+
+      if (!winningOutcomeId) {
+        return res.status(400).json({ error: "Missing winningOutcomeId" });
+      }
+
+      const pool = await storage.getChampionshipPool(poolId);
+      if (!pool) {
+        return res.status(404).json({ error: "Pool not found" });
+      }
+
+      if (pool.status === "concluded") {
+        return res.status(400).json({ error: "Pool already concluded" });
+      }
+
+      // Verify the outcome exists and belongs to this pool
+      const outcome = await storage.getChampionshipOutcome(winningOutcomeId);
+      if (!outcome || outcome.poolId !== poolId) {
+        return res.status(400).json({ error: "Invalid winning outcome for this pool" });
+      }
+
+      const updatedPool = await storage.concludePool(poolId, winningOutcomeId);
+
+      res.json({
+        success: true,
+        pool: updatedPool,
+        message: `Pool concluded with winning outcome: ${outcome.participantId}`
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to conclude pool" });
+    }
+  });
+
+  // Calculate payouts for a concluded pool (admin endpoint)
+  app.post("/api/pools/:poolId/calculate-payouts", async (req, res) => {
+    try {
+      const { poolId } = req.params;
+
+      const pool = await storage.getChampionshipPool(poolId);
+      if (!pool) {
+        return res.status(404).json({ error: "Pool not found" });
+      }
+
+      if (pool.status !== "concluded" || !pool.winningOutcomeId) {
+        return res.status(400).json({ error: "Pool must be concluded with a winning outcome first" });
+      }
+
+      // Check if payouts already exist
+      const existingPayouts = await storage.getPoolPayoutsByPool(poolId);
+      if (existingPayouts.length > 0) {
+        return res.status(400).json({ error: "Payouts already calculated for this pool" });
+      }
+
+      // Get all positions for the winning outcome
+      const winningPositions = await storage.getPoolPositionsByOutcome(pool.winningOutcomeId);
+
+      if (winningPositions.length === 0) {
+        return res.json({
+          success: true,
+          payouts: [],
+          message: "No shareholders in winning outcome - no payouts to distribute"
+        });
+      }
+
+      // Calculate total shares held in winning outcome
+      const totalWinningShares = winningPositions.reduce((sum, p) => sum + p.sharesOwned, 0);
+      const prizePool = pool.totalCollateral;
+
+      // Create payout records for each winner
+      const payouts = [];
+      for (const position of winningPositions) {
+        const sharePercentage = position.sharesOwned / totalWinningShares;
+        const payoutAmount = sharePercentage * prizePool;
+
+        const payout = await storage.createPoolPayout({
+          poolId,
+          outcomeId: pool.winningOutcomeId,
+          userId: position.userId,
+          sharesHeld: position.sharesOwned,
+          sharePercentage,
+          payoutAmount,
+          status: "pending",
+        });
+        payouts.push(payout);
+      }
+
+      res.json({
+        success: true,
+        payouts,
+        totalPrizePool: prizePool,
+        totalWinningShares,
+        winnersCount: payouts.length,
+        message: `Calculated payouts for ${payouts.length} winners`
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to calculate payouts" });
+    }
+  });
+
+  // Distribute payouts via Stellar USDC (admin endpoint)
+  app.post("/api/pools/:poolId/distribute-payouts", async (req, res) => {
+    try {
+      const { poolId } = req.params;
+
+      const pool = await storage.getChampionshipPool(poolId);
+      if (!pool) {
+        return res.status(404).json({ error: "Pool not found" });
+      }
+
+      if (pool.status !== "concluded") {
+        return res.status(400).json({ error: "Pool must be concluded first" });
+      }
+
+      const payouts = await storage.getPoolPayoutsByPool(poolId);
+      const pendingPayouts = payouts.filter(p => p.status === "pending");
+
+      if (pendingPayouts.length === 0) {
+        return res.status(400).json({ error: "No pending payouts to distribute" });
+      }
+
+      // Pre-flight check: Verify platform wallet has enough USDC
+      const platformAddress = getPlatformAddress();
+      if (!platformAddress) {
+        return res.status(500).json({ error: "Platform wallet not configured" });
+      }
+
+      const totalPayoutAmount = pendingPayouts.reduce((sum, p) => sum + p.payoutAmount, 0);
+      const platformBalance = await getUSDCBalance(platformAddress);
+      const platformUSDC = parseFloat(platformBalance);
+
+      if (platformUSDC < totalPayoutAmount) {
+        return res.status(400).json({ 
+          error: `Insufficient platform USDC. Need $${totalPayoutAmount.toFixed(2)}, have $${platformUSDC.toFixed(2)}` 
+        });
+      }
+
+      // Pre-flight check: Verify all recipients have valid wallets and trustlines
+      const preFlightResults = [];
+      for (const payout of pendingPayouts) {
+        const user = await storage.getUser(payout.userId);
+        
+        if (!user?.walletAddress) {
+          preFlightResults.push({
+            payoutId: payout.id,
+            userId: payout.userId,
+            valid: false,
+            error: "User has no linked wallet"
+          });
+          continue;
+        }
+
+        const hasTrustline = await hasUSDCTrustline(user.walletAddress);
+        if (!hasTrustline) {
+          preFlightResults.push({
+            payoutId: payout.id,
+            userId: payout.userId,
+            valid: false,
+            error: "User wallet does not have USDC trustline"
+          });
+          continue;
+        }
+
+        preFlightResults.push({
+          payoutId: payout.id,
+          userId: payout.userId,
+          walletAddress: user.walletAddress,
+          valid: true
+        });
+      }
+
+      // Report pre-flight failures but continue with valid payouts
+      const validPayouts = preFlightResults.filter(p => p.valid);
+      const invalidPayouts = preFlightResults.filter(p => !p.valid);
+
+      // Mark invalid payouts as failed
+      for (const invalid of invalidPayouts) {
+        await storage.updatePoolPayoutStatus(invalid.payoutId, "failed");
+      }
+
+      if (validPayouts.length === 0) {
+        return res.status(400).json({ 
+          error: "No valid payouts to distribute",
+          failures: invalidPayouts.map(p => ({ payoutId: p.payoutId, error: p.error }))
+        });
+      }
+
+      const results = [];
+      let successCount = 0;
+      let failCount = invalidPayouts.length;
+
+      // Process valid payouts
+      for (const validPayout of validPayouts) {
+        const payout = pendingPayouts.find(p => p.id === validPayout.payoutId)!;
+        
+        // Send USDC payment
+        const transferResult = await sendUSDCPayment(
+          validPayout.walletAddress!,
+          payout.payoutAmount.toFixed(7),
+          `payout:${poolId.slice(0, 14)}`
+        );
+
+        if (transferResult.success) {
+          await storage.updatePoolPayoutStatus(payout.id, "sent", transferResult.transactionHash);
+          results.push({
+            payoutId: payout.id,
+            userId: payout.userId,
+            success: true,
+            amount: payout.payoutAmount,
+            transactionHash: transferResult.transactionHash
+          });
+          successCount++;
+        } else {
+          await storage.updatePoolPayoutStatus(payout.id, "failed");
+          results.push({
+            payoutId: payout.id,
+            userId: payout.userId,
+            success: false,
+            error: transferResult.error
+          });
+          failCount++;
+        }
+      }
+
+      // Add pre-flight failures to results
+      for (const invalid of invalidPayouts) {
+        results.push({
+          payoutId: invalid.payoutId,
+          userId: invalid.userId,
+          success: false,
+          error: invalid.error
+        });
+      }
+
+      res.json({
+        success: true,
+        results,
+        summary: {
+          total: pendingPayouts.length,
+          successful: successCount,
+          failed: failCount
+        },
+        message: `Distributed ${successCount} payouts, ${failCount} failed`
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to distribute payouts" });
+    }
+  });
+
+  // Get payouts for a pool
+  app.get("/api/pools/:poolId/payouts", async (req, res) => {
+    try {
+      const payouts = await storage.getPoolPayoutsByPool(req.params.poolId);
+      res.json(payouts);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch payouts" });
+    }
+  });
+
+  // Get user's payouts across all pools
+  app.get("/api/pools/payouts/user/:userId", async (req, res) => {
+    try {
+      const payouts = await storage.getPoolPayoutsByUser(req.params.userId);
+      res.json(payouts);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch user payouts" });
     }
   });
 }

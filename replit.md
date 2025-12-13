@@ -32,14 +32,24 @@ Preferred communication style: Simple, everyday language.
 ### Key Data Models
 - **Users**: Account with balance (deprecated - using wallet USDC), optional walletAddress for Freighter wallet linking
 - **Teams**: 11 F1 teams for 2026 season (Red Bull, Ferrari, Mercedes, McLaren, Aston Martin, Alpine, Williams, RB, Audi, Haas, Cadillac)
-  - All teams start at equal $0.10 price - market demand drives pricing
-  - Sauber removed (replaced by Audi), Cadillac added as new entry
-  - No share limit - unlimited shares can be purchased
-- **Holdings**: User ownership of team shares with average purchase price
-- **Transactions**: Record of all buy/sell activity
-- **PriceHistory**: Team price snapshots recorded on trades and seeded on startup for charts
+- **Drivers**: 22 F1 drivers for 2026 season with team associations
+- **ChampionshipPools**: LMSR-based prediction pools (team championship, driver championship)
+  - Uses Logarithmic Market Scoring Rule (LMSR) for automated market making
+  - Prices automatically adjust based on shares sold per outcome
+  - Liquidity parameter controls price sensitivity
+- **PoolPositions**: User holdings within championship pools (shares per outcome)
+- **PoolTrades**: Ledger of all pool buy/sell transactions with LMSR pricing
+- **PoolPayouts**: Prize distributions when pools are resolved
 - **Seasons**: Tracks season state (active/concluded), winning team, prize pool
-- **Payouts**: Records prize distributions to winning team shareholders
+
+### Trading System (LMSR Pools)
+The platform uses LMSR (Logarithmic Market Scoring Rule) pools for prediction markets:
+- **Pool Types**: Team Championship, Driver Championship
+- **Pricing**: Automated via LMSR formula - prices sum to ~$1 across all outcomes
+- **API**: `/api/pools/*` endpoints in `pool-routes.ts`
+- **Price Calculation**: `price = exp(shares_i/b) / sum(exp(shares_j/b))` where b=liquidity parameter
+
+Legacy CLOB (Central Limit Order Book) system exists in `server/routes.ts` at `/api/clob/*` but is deprecated. The LMSR pool system provides better liquidity and simpler UX.
 
 ### Application Flow
 1. Guest users are auto-created on first visit (stored in localStorage)
@@ -79,6 +89,8 @@ Preferred communication style: Simple, everyday language.
 - Demo credits with $5000 lifetime limit per user for testing
 
 ### Secure Buy Order Flow (Nonce-Based Verification)
+@deprecated - This flow is for the legacy CLOB system. The active pool system uses demo credits for trading.
+
 Buy orders require USDC payment via signed Stellar transactions with server-side verification:
 
 1. **Build Transaction** (`POST /api/clob/orders/build-transaction`)

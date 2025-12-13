@@ -1,5 +1,5 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, integer, real, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, real, timestamp, boolean, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -541,6 +541,35 @@ export const poolBuySchema = z.object({
   shares: z.number().positive(),
 });
 
+// Pool Payouts - Records prize distributions for pool winners
+export const poolPayouts = pgTable("pool_payouts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  poolId: varchar("pool_id").notNull().references(() => championshipPools.id),
+  outcomeId: varchar("outcome_id").notNull().references(() => championshipOutcomes.id),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  sharesHeld: real("shares_held").notNull(),
+  sharePercentage: real("share_percentage").notNull(),
+  payoutAmount: real("payout_amount").notNull(),
+  stellarTxHash: text("stellar_tx_hash"),
+  status: text("status").notNull().default("pending"), // 'pending', 'sent', 'failed'
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  paidAt: timestamp("paid_at"),
+}, (table) => ({
+  poolUserUnique: unique().on(table.poolId, table.userId),
+}));
+
+export const poolPayoutsRelations = relations(poolPayouts, ({ one }) => ({
+  pool: one(championshipPools, { fields: [poolPayouts.poolId], references: [championshipPools.id] }),
+  outcome: one(championshipOutcomes, { fields: [poolPayouts.outcomeId], references: [championshipOutcomes.id] }),
+  user: one(users, { fields: [poolPayouts.userId], references: [users.id] }),
+}));
+
+export const insertPoolPayoutSchema = createInsertSchema(poolPayouts).omit({
+  id: true,
+  createdAt: true,
+  paidAt: true,
+});
+
 // Pool Types
 export type InsertChampionshipPool = z.infer<typeof insertChampionshipPoolSchema>;
 export type ChampionshipPool = typeof championshipPools.$inferSelect;
@@ -551,3 +580,5 @@ export type PoolTrade = typeof poolTrades.$inferSelect;
 export type InsertPoolPosition = z.infer<typeof insertPoolPositionSchema>;
 export type PoolPosition = typeof poolPositions.$inferSelect;
 export type PoolBuyRequest = z.infer<typeof poolBuySchema>;
+export type InsertPoolPayout = z.infer<typeof insertPoolPayoutSchema>;
+export type PoolPayout = typeof poolPayouts.$inferSelect;

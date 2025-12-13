@@ -1,6 +1,6 @@
 import { 
   users, teams, drivers, holdings, transactions, deposits, priceHistory, seasons, payouts, markets, orderFills,
-  championshipPools, championshipOutcomes, poolTrades, poolPositions,
+  championshipPools, championshipOutcomes, poolTrades, poolPositions, poolPayouts,
   type User, type InsertUser, 
   type Team, type InsertTeam,
   type Driver, type InsertDriver,
@@ -15,6 +15,7 @@ import {
   type ChampionshipOutcome, type InsertChampionshipOutcome,
   type PoolTrade, type InsertPoolTrade,
   type PoolPosition, type InsertPoolPosition,
+  type PoolPayout, type InsertPoolPayout,
   type BuySharesRequest,
   type SellSharesRequest
 } from "@shared/schema";
@@ -123,6 +124,14 @@ export interface IStorage {
   
   // Pool Initialization
   initializePoolsForSeason(seasonId: string): Promise<{ teamPool: ChampionshipPool; driverPool: ChampionshipPool }>;
+  
+  // Pool Payout Management
+  concludePool(poolId: string, winningOutcomeId: string): Promise<ChampionshipPool | undefined>;
+  getPoolPositionsByOutcome(outcomeId: string): Promise<PoolPosition[]>;
+  createPoolPayout(payout: InsertPoolPayout): Promise<PoolPayout>;
+  getPoolPayoutsByPool(poolId: string): Promise<PoolPayout[]>;
+  getPoolPayoutsByUser(userId: string): Promise<PoolPayout[]>;
+  updatePoolPayoutStatus(payoutId: string, status: string, stellarTxHash?: string): Promise<PoolPayout | undefined>;
 }
 
 // Initial F1 2026 teams data - all teams start at equal $0.10 price
@@ -932,6 +941,54 @@ export class DatabaseStorage implements IStorage {
     }
 
     return { teamPool, driverPool };
+  }
+
+  // ============ Pool Payout Management ============
+
+  async concludePool(poolId: string, winningOutcomeId: string): Promise<ChampionshipPool | undefined> {
+    const [updated] = await db
+      .update(championshipPools)
+      .set({ 
+        status: "concluded",
+        winningOutcomeId,
+      })
+      .where(eq(championshipPools.id, poolId))
+      .returning();
+    return updated || undefined;
+  }
+
+  async getPoolPositionsByOutcome(outcomeId: string): Promise<PoolPosition[]> {
+    return await db.select().from(poolPositions).where(eq(poolPositions.outcomeId, outcomeId));
+  }
+
+  async createPoolPayout(payout: InsertPoolPayout): Promise<PoolPayout> {
+    const [created] = await db.insert(poolPayouts).values(payout).returning();
+    return created;
+  }
+
+  async getPoolPayoutsByPool(poolId: string): Promise<PoolPayout[]> {
+    return await db.select().from(poolPayouts).where(eq(poolPayouts.poolId, poolId)).orderBy(desc(poolPayouts.createdAt));
+  }
+
+  async getPoolPayoutsByUser(userId: string): Promise<PoolPayout[]> {
+    return await db.select().from(poolPayouts).where(eq(poolPayouts.userId, userId)).orderBy(desc(poolPayouts.createdAt));
+  }
+
+  async updatePoolPayoutStatus(payoutId: string, status: string, stellarTxHash?: string): Promise<PoolPayout | undefined> {
+    const updateData: any = { status };
+    if (stellarTxHash) {
+      updateData.stellarTxHash = stellarTxHash;
+    }
+    if (status === "sent") {
+      updateData.paidAt = new Date();
+    }
+    
+    const [updated] = await db
+      .update(poolPayouts)
+      .set(updateData)
+      .where(eq(poolPayouts.id, payoutId))
+      .returning();
+    return updated || undefined;
   }
 }
 

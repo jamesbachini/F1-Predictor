@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Header } from "@/components/Header";
 import { HeroSection } from "@/components/HeroSection";
 import { MarketOverview } from "@/components/MarketOverview";
-import { PlaceOrderModal } from "@/components/PlaceOrderModal";
+import { PoolBuyModal } from "@/components/PoolBuyModal";
 import { HowItWorks } from "@/components/HowItWorks";
 import { MarketStats } from "@/components/MarketStats";
 import { TeamValueChart } from "@/components/TeamValueChart";
@@ -14,21 +14,24 @@ import { AlertCircle, Trophy } from "lucide-react";
 import type { F1Team } from "@/context/MarketContext";
 import type { Driver } from "@/components/DriverCard";
 
-interface Market {
+interface PoolOutcome {
   id: string;
-  seasonId?: string;
-  teamId?: string;
-  driverId?: string;
-  outstandingPairs: number;
-  lockedCollateral: number;
-  lastPrice: number | null;
-  status: string;
+  poolId: string;
+  participantId: string;
+  participantName: string;
+  sharesOutstanding: number;
+  price: number;
+  probability: number;
 }
 
-interface USDCBalanceResponse {
-  address: string;
-  balance: string;
-  asset: string;
+interface ChampionshipPool {
+  id: string;
+  seasonId: string;
+  type: "team" | "driver";
+  status: string;
+  bParameter: number;
+  totalCollateral: number;
+  outcomes: PoolOutcome[];
 }
 
 interface SeasonResponse {
@@ -44,7 +47,7 @@ export default function Home() {
   const { teams, userId } = useMarket();
   const [selectedTeam, setSelectedTeam] = useState<F1Team | null>(null);
   const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
-  const [selectedMarket, setSelectedMarket] = useState<Market | DriverMarket | null>(null);
+  const [selectedPool, setSelectedPool] = useState<ChampionshipPool | null>(null);
   const [orderModalOpen, setOrderModalOpen] = useState(false);
   const [connectWalletModalOpen, setConnectWalletModalOpen] = useState(false);
 
@@ -52,28 +55,15 @@ export default function Home() {
     queryKey: ["/api/season"],
   });
 
-  const { data: markets = [] } = useQuery<Market[]>({
-    queryKey: ["/api/clob/markets"],
+  const { data: teamPool } = useQuery<ChampionshipPool>({
+    queryKey: ["/api/pools/type/team"],
+    refetchInterval: 5000,
   });
 
-  const { data: driverMarkets = [] } = useQuery<Market[]>({
-    queryKey: ["/api/clob/driver-markets"],
+  const { data: driverPool } = useQuery<ChampionshipPool>({
+    queryKey: ["/api/pools/type/driver"],
+    refetchInterval: 5000,
   });
-
-  const { data: usdcBalance } = useQuery<USDCBalanceResponse>({
-    queryKey: ["/api/stellar/balance", walletAddress],
-    enabled: !!walletAddress,
-  });
-
-  const walletUsdcBalance = parseFloat(usdcBalance?.balance || "0");
-
-  const getMarketForTeam = (teamId: string) => {
-    return markets.find((m) => m.teamId === teamId);
-  };
-
-  const getMarketForDriver = (driverId: string) => {
-    return driverMarkets.find((m) => m.driverId === driverId);
-  };
 
   const isSeasonConcluded = season?.exists && season.status === "concluded";
   const winningTeam = season?.winningTeamId 
@@ -88,13 +78,12 @@ export default function Home() {
       setConnectWalletModalOpen(true);
       return;
     }
-    const market = getMarketForTeam(team.id);
-    if (!market) {
+    if (!teamPool) {
       return;
     }
     setSelectedDriver(null);
     setSelectedTeam(team);
-    setSelectedMarket(market);
+    setSelectedPool(teamPool);
     setOrderModalOpen(true);
   };
 
@@ -106,19 +95,25 @@ export default function Home() {
       setConnectWalletModalOpen(true);
       return;
     }
-    const market = getMarketForDriver(driver.id);
-    if (!market) {
+    if (!driverPool) {
       return;
     }
     setSelectedTeam(null);
     setSelectedDriver(driver);
-    setSelectedMarket(market);
+    setSelectedPool(driverPool);
     setOrderModalOpen(true);
   };
 
   const handleStartTrading = () => {
     const marketSection = document.getElementById("market-section");
     marketSection?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  const handleCloseOrderModal = () => {
+    setOrderModalOpen(false);
+    setSelectedPool(null);
+    setSelectedTeam(null);
+    setSelectedDriver(null);
   };
 
   return (
@@ -154,20 +149,15 @@ export default function Home() {
       <HowItWorks />
       <MarketStats />
 
-      {selectedMarket && (selectedTeam || selectedDriver) && userId && (
-        <PlaceOrderModal
+      {selectedPool && (selectedTeam || selectedDriver) && userId && (
+        <PoolBuyModal
           open={orderModalOpen}
-          onClose={() => {
-            setOrderModalOpen(false);
-            setSelectedMarket(null);
-            setSelectedTeam(null);
-            setSelectedDriver(null);
-          }}
-          market={selectedMarket}
-          teamName={selectedTeam?.name || selectedDriver?.name || ""}
-          teamColor={selectedTeam?.color || selectedDriver?.color || "#888"}
+          onClose={handleCloseOrderModal}
+          pool={selectedPool}
+          participantId={selectedTeam?.id || selectedDriver?.id || ""}
+          participantName={selectedTeam?.name || selectedDriver?.name || ""}
+          participantColor={selectedTeam?.color || selectedDriver?.color || "#888"}
           userId={userId}
-          userBalance={walletUsdcBalance}
         />
       )}
 
