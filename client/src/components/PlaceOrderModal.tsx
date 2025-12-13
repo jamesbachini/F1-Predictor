@@ -13,7 +13,8 @@ import { useWallet } from "@/context/WalletContext";
 
 interface Market {
   id: string;
-  teamId: string;
+  teamId?: string;
+  driverId?: string;
   lastPrice: number | null;
   outstandingPairs: number;
   lockedCollateral: number;
@@ -242,7 +243,7 @@ export function PlaceOrderModal({
               className="w-4 h-4 rounded-full"
               style={{ backgroundColor: teamColor }}
             />
-            Trade: {teamName} Wins?
+            Trade: {teamName} to Win?
           </DialogTitle>
           <DialogDescription>
             {side === "buy" 
