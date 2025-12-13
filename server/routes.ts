@@ -22,6 +22,7 @@ import {
 import { matchingEngine } from "./matchingEngine";
 import { marketMaker } from "./marketMaker";
 import { randomBytes } from "crypto";
+import { registerPoolRoutes } from "./pool-routes";
 
 // In-memory store for pending transaction expectations
 // Key: nonce, Value: { userId, walletAddress, collateralAmount, orderDetails, createdAt }
@@ -78,6 +79,9 @@ export async function registerRoutes(
   } catch (error) {
     console.error("Failed to start market maker bot:", error);
   }
+
+  // Register LMSR pool routes
+  registerPoolRoutes(app);
 
   // ============ Teams/Market Routes ============
   

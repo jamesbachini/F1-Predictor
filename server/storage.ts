@@ -1,5 +1,6 @@
 import { 
   users, teams, drivers, holdings, transactions, deposits, priceHistory, seasons, payouts, markets, orderFills,
+  championshipPools, championshipOutcomes, poolTrades, poolPositions,
   type User, type InsertUser, 
   type Team, type InsertTeam,
   type Driver, type InsertDriver,
@@ -10,6 +11,10 @@ import {
   type Season, type InsertSeason,
   type Payout, type InsertPayout,
   type Market, type InsertMarket,
+  type ChampionshipPool, type InsertChampionshipPool,
+  type ChampionshipOutcome, type InsertChampionshipOutcome,
+  type PoolTrade, type InsertPoolTrade,
+  type PoolPosition, type InsertPoolPosition,
   type BuySharesRequest,
   type SellSharesRequest
 } from "@shared/schema";
@@ -90,6 +95,34 @@ export interface IStorage {
   
   // CLOB Price History
   getCLOBPriceHistory(teamId?: string, limit?: number): Promise<{ id: string; teamId: string; price: number; recordedAt: string }[]>;
+  
+  // Championship Pools (LMSR)
+  getChampionshipPools(): Promise<ChampionshipPool[]>;
+  getChampionshipPool(id: string): Promise<ChampionshipPool | undefined>;
+  getChampionshipPoolByType(seasonId: string, type: 'team' | 'driver'): Promise<ChampionshipPool | undefined>;
+  createChampionshipPool(pool: InsertChampionshipPool): Promise<ChampionshipPool>;
+  updatePoolCollateral(poolId: string, additionalCollateral: number): Promise<ChampionshipPool | undefined>;
+  
+  // Championship Outcomes
+  getChampionshipOutcomes(poolId: string): Promise<ChampionshipOutcome[]>;
+  getChampionshipOutcome(id: string): Promise<ChampionshipOutcome | undefined>;
+  getChampionshipOutcomeByParticipant(poolId: string, participantId: string): Promise<ChampionshipOutcome | undefined>;
+  createChampionshipOutcome(outcome: InsertChampionshipOutcome): Promise<ChampionshipOutcome>;
+  updateOutcomeShares(outcomeId: string, additionalShares: number): Promise<ChampionshipOutcome | undefined>;
+  
+  // Pool Trades
+  createPoolTrade(trade: InsertPoolTrade): Promise<PoolTrade>;
+  getPoolTradesByUser(userId: string): Promise<PoolTrade[]>;
+  getPoolTradesByPool(poolId: string): Promise<PoolTrade[]>;
+  
+  // Pool Positions
+  getPoolPosition(poolId: string, outcomeId: string, userId: string): Promise<PoolPosition | undefined>;
+  getPoolPositionsByUser(userId: string): Promise<PoolPosition[]>;
+  getPoolPositionsByPool(poolId: string): Promise<PoolPosition[]>;
+  upsertPoolPosition(position: InsertPoolPosition & { poolId: string; outcomeId: string; userId: string }): Promise<PoolPosition>;
+  
+  // Pool Initialization
+  initializePoolsForSeason(seasonId: string): Promise<{ teamPool: ChampionshipPool; driverPool: ChampionshipPool }>;
 }
 
 // Initial F1 2026 teams data - all teams start at equal $0.10 price
@@ -729,6 +762,176 @@ export class DatabaseStorage implements IStorage {
       price: fill.yesPrice,
       recordedAt: fill.createdAt.toISOString(),
     })).filter(f => f.teamId);
+  }
+
+  // ============ Championship Pools (LMSR) ============
+
+  async getChampionshipPools(): Promise<ChampionshipPool[]> {
+    return await db.select().from(championshipPools);
+  }
+
+  async getChampionshipPool(id: string): Promise<ChampionshipPool | undefined> {
+    const [pool] = await db.select().from(championshipPools).where(eq(championshipPools.id, id));
+    return pool || undefined;
+  }
+
+  async getChampionshipPoolByType(seasonId: string, type: 'team' | 'driver'): Promise<ChampionshipPool | undefined> {
+    const [pool] = await db.select().from(championshipPools).where(
+      and(eq(championshipPools.seasonId, seasonId), eq(championshipPools.type, type))
+    );
+    return pool || undefined;
+  }
+
+  async createChampionshipPool(pool: InsertChampionshipPool): Promise<ChampionshipPool> {
+    const [created] = await db.insert(championshipPools).values(pool).returning();
+    return created;
+  }
+
+  async updatePoolCollateral(poolId: string, additionalCollateral: number): Promise<ChampionshipPool | undefined> {
+    const pool = await this.getChampionshipPool(poolId);
+    if (!pool) return undefined;
+    
+    const [updated] = await db
+      .update(championshipPools)
+      .set({ totalCollateral: pool.totalCollateral + additionalCollateral })
+      .where(eq(championshipPools.id, poolId))
+      .returning();
+    return updated || undefined;
+  }
+
+  // ============ Championship Outcomes ============
+
+  async getChampionshipOutcomes(poolId: string): Promise<ChampionshipOutcome[]> {
+    return await db.select().from(championshipOutcomes).where(eq(championshipOutcomes.poolId, poolId));
+  }
+
+  async getChampionshipOutcome(id: string): Promise<ChampionshipOutcome | undefined> {
+    const [outcome] = await db.select().from(championshipOutcomes).where(eq(championshipOutcomes.id, id));
+    return outcome || undefined;
+  }
+
+  async getChampionshipOutcomeByParticipant(poolId: string, participantId: string): Promise<ChampionshipOutcome | undefined> {
+    const [outcome] = await db.select().from(championshipOutcomes).where(
+      and(eq(championshipOutcomes.poolId, poolId), eq(championshipOutcomes.participantId, participantId))
+    );
+    return outcome || undefined;
+  }
+
+  async createChampionshipOutcome(outcome: InsertChampionshipOutcome): Promise<ChampionshipOutcome> {
+    const [created] = await db.insert(championshipOutcomes).values(outcome).returning();
+    return created;
+  }
+
+  async updateOutcomeShares(outcomeId: string, additionalShares: number): Promise<ChampionshipOutcome | undefined> {
+    const outcome = await this.getChampionshipOutcome(outcomeId);
+    if (!outcome) return undefined;
+    
+    const [updated] = await db
+      .update(championshipOutcomes)
+      .set({ sharesOutstanding: outcome.sharesOutstanding + additionalShares })
+      .where(eq(championshipOutcomes.id, outcomeId))
+      .returning();
+    return updated || undefined;
+  }
+
+  // ============ Pool Trades ============
+
+  async createPoolTrade(trade: InsertPoolTrade): Promise<PoolTrade> {
+    const [created] = await db.insert(poolTrades).values(trade).returning();
+    return created;
+  }
+
+  async getPoolTradesByUser(userId: string): Promise<PoolTrade[]> {
+    return await db.select().from(poolTrades).where(eq(poolTrades.userId, userId)).orderBy(desc(poolTrades.createdAt));
+  }
+
+  async getPoolTradesByPool(poolId: string): Promise<PoolTrade[]> {
+    return await db.select().from(poolTrades).where(eq(poolTrades.poolId, poolId)).orderBy(desc(poolTrades.createdAt));
+  }
+
+  // ============ Pool Positions ============
+
+  async getPoolPosition(poolId: string, outcomeId: string, userId: string): Promise<PoolPosition | undefined> {
+    const [position] = await db.select().from(poolPositions).where(
+      and(
+        eq(poolPositions.poolId, poolId),
+        eq(poolPositions.outcomeId, outcomeId),
+        eq(poolPositions.userId, userId)
+      )
+    );
+    return position || undefined;
+  }
+
+  async getPoolPositionsByUser(userId: string): Promise<PoolPosition[]> {
+    return await db.select().from(poolPositions).where(eq(poolPositions.userId, userId));
+  }
+
+  async getPoolPositionsByPool(poolId: string): Promise<PoolPosition[]> {
+    return await db.select().from(poolPositions).where(eq(poolPositions.poolId, poolId));
+  }
+
+  async upsertPoolPosition(position: InsertPoolPosition & { poolId: string; outcomeId: string; userId: string }): Promise<PoolPosition> {
+    const existing = await this.getPoolPosition(position.poolId, position.outcomeId, position.userId);
+    
+    if (existing) {
+      const [updated] = await db
+        .update(poolPositions)
+        .set({
+          sharesOwned: (existing.sharesOwned || 0) + (position.sharesOwned || 0),
+          totalCost: (existing.totalCost || 0) + (position.totalCost || 0),
+          updatedAt: new Date(),
+        })
+        .where(eq(poolPositions.id, existing.id))
+        .returning();
+      return updated;
+    } else {
+      const [created] = await db.insert(poolPositions).values(position).returning();
+      return created;
+    }
+  }
+
+  // ============ Pool Initialization ============
+
+  async initializePoolsForSeason(seasonId: string): Promise<{ teamPool: ChampionshipPool; driverPool: ChampionshipPool }> {
+    // Create team championship pool
+    const teamPool = await this.createChampionshipPool({
+      seasonId,
+      type: "team",
+      bParameter: 100,
+      totalCollateral: 0,
+      status: "active",
+    });
+
+    // Create driver championship pool
+    const driverPool = await this.createChampionshipPool({
+      seasonId,
+      type: "driver",
+      bParameter: 100,
+      totalCollateral: 0,
+      status: "active",
+    });
+
+    // Add outcomes for all teams
+    const allTeams = await this.getTeams();
+    for (const team of allTeams) {
+      await this.createChampionshipOutcome({
+        poolId: teamPool.id,
+        participantId: team.id,
+        sharesOutstanding: 0,
+      });
+    }
+
+    // Add outcomes for all drivers
+    const allDrivers = await this.getDrivers();
+    for (const driver of allDrivers) {
+      await this.createChampionshipOutcome({
+        poolId: driverPool.id,
+        participantId: driver.id,
+        sharesOutstanding: 0,
+      });
+    }
+
+    return { teamPool, driverPool };
   }
 }
 
