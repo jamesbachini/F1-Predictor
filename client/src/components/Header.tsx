@@ -1,4 +1,4 @@
-import { Wallet, TrendingUp, Menu, Plus, Loader2, BarChart3 } from "lucide-react";
+import { Wallet, TrendingUp, Menu, Plus, Loader2, BarChart3, Briefcase } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -19,12 +19,7 @@ interface USDCBalanceResponse {
   asset: string;
 }
 
-interface HeaderProps {
-  onNavigate?: (section: "market" | "portfolio") => void;
-  activeSection?: "market" | "portfolio";
-}
-
-export function Header({ onNavigate, activeSection = "market" }: HeaderProps) {
+export function Header() {
   const { walletAddress } = useWallet();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [depositOpen, setDepositOpen] = useState(false);
@@ -34,11 +29,6 @@ export function Header({ onNavigate, activeSection = "market" }: HeaderProps) {
     enabled: !!walletAddress,
   });
 
-  const navItems = [
-    { id: "market" as const, label: "Market" },
-    { id: "portfolio" as const, label: "Positions" },
-  ];
-  
   const [location] = useLocation();
 
   return (
@@ -53,26 +43,26 @@ export function Header({ onNavigate, activeSection = "market" }: HeaderProps) {
           </Link>
           
           <nav className="hidden items-center gap-1 md:flex">
-            {navItems.map((item) => (
+            <Link href="/positions">
               <Button
-                key={item.id}
-                variant={activeSection === item.id ? "secondary" : "ghost"}
+                variant={location === "/positions" ? "secondary" : "ghost"}
                 size="sm"
-                onClick={() => onNavigate?.(item.id)}
-                data-testid={`button-nav-${item.id}`}
+                data-testid="button-nav-positions"
               >
-                {item.label}
+                <Briefcase className="mr-1 h-4 w-4" />
+                Positions
               </Button>
-            ))}
-            <Button
+            </Link>
+            <Link href="/markets">
+              <Button
                 variant={location === "/markets" ? "secondary" : "ghost"}
                 size="sm"
-                onClick={() => window.location.href = "/markets"}
                 data-testid="button-nav-order-book"
               >
                 <BarChart3 className="mr-1 h-4 w-4" />
                 Order Book
               </Button>
+            </Link>
           </nav>
         </div>
 
@@ -115,32 +105,28 @@ export function Header({ onNavigate, activeSection = "market" }: HeaderProps) {
             </SheetTrigger>
             <SheetContent side="right" className="w-64">
               <nav className="mt-8 flex flex-col gap-2">
-                {navItems.map((item) => (
+                <Link href="/positions">
                   <Button
-                    key={item.id}
-                    variant={activeSection === item.id ? "secondary" : "ghost"}
-                    className="justify-start"
-                    onClick={() => {
-                      onNavigate?.(item.id);
-                      setMobileMenuOpen(false);
-                    }}
-                    data-testid={`button-mobile-nav-${item.id}`}
+                    variant={location === "/positions" ? "secondary" : "ghost"}
+                    className="justify-start w-full"
+                    onClick={() => setMobileMenuOpen(false)}
+                    data-testid="button-mobile-nav-positions"
                   >
-                    {item.label}
+                    <Briefcase className="mr-2 h-4 w-4" />
+                    Positions
                   </Button>
-                ))}
-                <Button
+                </Link>
+                <Link href="/markets">
+                  <Button
                     variant={location === "/markets" ? "secondary" : "ghost"}
                     className="justify-start w-full"
-                    onClick={() => {
-                      setMobileMenuOpen(false);
-                      window.location.href = "/markets";
-                    }}
+                    onClick={() => setMobileMenuOpen(false)}
                     data-testid="button-mobile-nav-order-book"
                   >
                     <BarChart3 className="mr-2 h-4 w-4" />
                     Order Book
                   </Button>
+                </Link>
               </nav>
             </SheetContent>
           </Sheet>

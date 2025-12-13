@@ -4,7 +4,6 @@ import { Header } from "@/components/Header";
 import { HeroSection } from "@/components/HeroSection";
 import { MarketOverview } from "@/components/MarketOverview";
 import { PlaceOrderModal } from "@/components/PlaceOrderModal";
-import { PortfolioSection } from "@/components/PortfolioSection";
 import { HowItWorks } from "@/components/HowItWorks";
 import { MarketStats } from "@/components/MarketStats";
 import { TeamValueChart } from "@/components/TeamValueChart";
@@ -41,7 +40,6 @@ interface SeasonResponse {
 export default function Home() {
   const { walletAddress } = useWallet();
   const { teams, userId } = useMarket();
-  const [activeSection, setActiveSection] = useState<"market" | "portfolio">("market");
   const [selectedTeam, setSelectedTeam] = useState<F1Team | null>(null);
   const [selectedMarket, setSelectedMarket] = useState<Market | null>(null);
   const [orderModalOpen, setOrderModalOpen] = useState(false);
@@ -89,14 +87,13 @@ export default function Home() {
   };
 
   const handleStartTrading = () => {
-    setActiveSection("market");
     const marketSection = document.getElementById("market-section");
     marketSection?.scrollIntoView({ behavior: "smooth" });
   };
 
   return (
     <div className="min-h-screen bg-background">
-      <Header onNavigate={setActiveSection} activeSection={activeSection} />
+      <Header />
       
       {isSeasonConcluded && (
         <div className="bg-amber-500/10 border-b border-amber-500/20">
@@ -115,23 +112,17 @@ export default function Home() {
         </div>
       )}
       
-      {activeSection === "market" ? (
-        <>
-          <HeroSection onStartTrading={handleStartTrading} />
-          <div id="market-section">
-            <MarketOverview onBuyTeam={handleBuyTeam} />
-          </div>
-          <section className="py-8">
-            <div className="mx-auto max-w-7xl px-4">
-              <TeamValueChart />
-            </div>
-          </section>
-          <HowItWorks />
-          <MarketStats />
-        </>
-      ) : (
-        <PortfolioSection />
-      )}
+      <HeroSection onStartTrading={handleStartTrading} />
+      <div id="market-section">
+        <MarketOverview onBuyTeam={handleBuyTeam} />
+      </div>
+      <section className="py-8">
+        <div className="mx-auto max-w-7xl px-4">
+          <TeamValueChart />
+        </div>
+      </section>
+      <HowItWorks />
+      <MarketStats />
 
       {selectedMarket && selectedTeam && userId && (
         <PlaceOrderModal
