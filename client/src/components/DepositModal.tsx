@@ -46,7 +46,7 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
     disconnectWallet();
     toast({
       title: "Wallet Disconnected",
-      description: "Your Freighter wallet has been disconnected.",
+      description: "Your Stellar wallet has been disconnected.",
     });
   };
 
@@ -56,13 +56,13 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
       // Link wallet to user on the backend
       if (userId) {
         try {
-          const { getAddress } = await import("@stellar/freighter-api");
-          const addressResult = await getAddress();
-          if (addressResult.address) {
+          const { StellarWalletsKit } = await import("@creit-tech/stellar-wallets-kit");
+          const { address } = await StellarWalletsKit.getAddress();
+          if (address) {
             const res = await fetch(`/api/users/${userId}/link-wallet`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ walletAddress: addressResult.address }),
+              body: JSON.stringify({ walletAddress: address }),
             });
             if (!res.ok) {
               const error = await res.json();
@@ -85,7 +85,7 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
             }
             toast({
               title: "Wallet Connected",
-              description: "Your Freighter wallet has been verified and linked.",
+              description: "Your wallet has been verified and linked.",
             });
           }
         } catch (e) {
@@ -100,13 +100,13 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
       } else {
         toast({
           title: "Wallet Connected",
-          description: "Your Freighter wallet has been connected.",
+          description: "Your wallet has been connected.",
         });
       }
     } else {
       toast({
         title: "Connection Failed",
-        description: "Failed to connect to Freighter wallet",
+        description: "No compatible Stellar wallet found. Please install Freighter, xBull, or another supported wallet.",
         variant: "destructive",
       });
     }
@@ -184,9 +184,9 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
                 <div className="flex items-start gap-2">
                   <AlertCircle className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
                   <div className="text-sm">
-                    <p className="font-medium">Freighter Wallet Not Detected</p>
+                    <p className="font-medium">No Stellar Wallet Detected</p>
                     <p className="text-muted-foreground mt-1">
-                      Install the Freighter browser extension to connect your Stellar wallet.
+                      Install a Stellar wallet extension like Freighter, xBull, or Lobstr to connect.
                     </p>
                     <Button
                       variant="outline"
@@ -220,7 +220,7 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
                   ) : (
                     <>
                       <Link2 className="h-4 w-4 mr-2" />
-                      Connect Freighter Wallet
+                      Connect Stellar Wallet
                     </>
                   )}
                 </Button>

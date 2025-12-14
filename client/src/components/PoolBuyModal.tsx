@@ -7,6 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import { Loader2, Wallet, Minus, Plus, AlertCircle, TrendingUp } from "lucide-react";
 import { useWallet } from "@/context/WalletContext";
+import { StellarWalletsKit } from "@creit-tech/stellar-wallets-kit";
 
 interface PoolOutcome {
   id: string;
@@ -126,13 +127,6 @@ export function PoolBuyModal({
         throw new Error(buildResult.error || "Failed to build transaction");
       }
       
-      const { signTransaction, isConnected } = await import("@stellar/freighter-api");
-      
-      const connected = await isConnected();
-      if (!connected) {
-        throw new Error("Freighter wallet extension not detected. Please install Freighter and refresh the page.");
-      }
-      
       toast({
         title: "Sign Transaction",
         description: `Please sign the transaction for $${buildResult.collateralAmount.toFixed(2)} USDC`,
@@ -140,14 +134,15 @@ export function PoolBuyModal({
       
       let signResult;
       try {
-        signResult = await signTransaction(buildResult.xdr, {
+        signResult = await StellarWalletsKit.signTransaction(buildResult.xdr, {
           networkPassphrase: buildResult.networkPassphrase,
+          address: walletAddress,
         });
       } catch (signError: any) {
-        if (signError?.message?.includes("User declined")) {
-          throw new Error("Transaction was declined. Please try again and approve the transaction in Freighter.");
+        if (signError?.message?.includes("User declined") || signError?.message?.includes("cancelled")) {
+          throw new Error("Transaction was declined. Please try again and approve the transaction in your wallet.");
         }
-        throw new Error(`Freighter signing error: ${signError?.message || "Unknown error"}`);
+        throw new Error(`Wallet signing error: ${signError?.message || "Unknown error"}`);
       }
       
       if (!signResult.signedTxXdr) {
@@ -326,7 +321,7 @@ export function PoolBuyModal({
           {!walletAddress && (
             <div className="flex items-center gap-2 rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-600 dark:text-amber-400">
               <Wallet className="h-4 w-4 shrink-0" />
-              <span>Please connect your Freighter wallet to purchase shares.</span>
+              <span>Please connect your Stellar wallet to purchase shares.</span>
             </div>
           )}
 
