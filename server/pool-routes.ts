@@ -499,7 +499,7 @@ export function registerPoolRoutes(app: Express): void {
       }
 
       // Get user's position
-      const position = await storage.getPoolPosition(userId, poolId, outcomeId);
+      const position = await storage.getPoolPosition(poolId, outcomeId, userId);
       if (!position || position.sharesOwned < shares) {
         return res.status(400).json({ 
           error: `Insufficient shares. You own ${position?.sharesOwned || 0} shares.` 
