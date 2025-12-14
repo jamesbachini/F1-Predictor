@@ -62,57 +62,10 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  // Seed teams on startup
-  await storage.seedTeams();
-  await storage.seedDrivers();
-  
-  // Record initial price snapshots if no history exists
-  const existingHistory = await storage.getPriceHistory(undefined, 1);
-  if (existingHistory.length === 0) {
-    await storage.recordAllTeamPrices();
-    console.log("Seeded initial price history snapshots");
-  }
-
-  // Auto-start market maker bot to provide liquidity
-  try {
-    await marketMaker.start(30000); // 30 second interval
-    console.log("Market maker bot auto-started for liquidity");
-  } catch (error) {
-    console.error("Failed to start market maker bot:", error);
-  }
-
-  // Initialize championship pools for current season if they don't exist
-  try {
-    const currentSeason = await storage.getCurrentSeason();
-    if (currentSeason && currentSeason.status === "active") {
-      const existingTeamPool = await storage.getChampionshipPoolByType(currentSeason.id, "team");
-      const existingDriverPool = await storage.getChampionshipPoolByType(currentSeason.id, "driver");
-      
-      if (!existingTeamPool || !existingDriverPool) {
-        // Verify teams and drivers are seeded before pool initialization
-        const teams = await storage.getTeams();
-        const drivers = await storage.getDrivers();
-        
-        if (teams.length === 0) {
-          console.error("Cannot initialize pools: No teams found. Ensure seedTeams() ran successfully.");
-        } else if (drivers.length === 0) {
-          console.error("Cannot initialize pools: No drivers found. Ensure seedDrivers() ran successfully.");
-        } else {
-          const { teamPool, driverPool } = await storage.initializePoolsForSeason(currentSeason.id);
-          console.log("Initialized championship pools for season:", currentSeason.id);
-          console.log("  Team pool:", teamPool.id, `(${teams.length} outcomes)`);
-          console.log("  Driver pool:", driverPool.id, `(${drivers.length} outcomes)`);
-        }
-      }
-    }
-  } catch (error) {
-    console.error("Failed to initialize championship pools:", error);
-  }
-
-  // Register LMSR pool routes
+  // Register LMSR pool routes (non-blocking)
   registerPoolRoutes(app);
   
-  // Register TLSNotary proof routes
+  // Register TLSNotary proof routes (non-blocking)
   registerProofRoutes(app);
 
   // ============ Teams/Market Routes ============
@@ -1230,4 +1183,60 @@ export async function registerRoutes(
   });
 
   return httpServer;
+}
+
+// Deferred initialization - runs AFTER the port is listening
+// This prevents deployment timeouts caused by slow startup operations
+export async function initializeAfterListen(): Promise<void> {
+  console.log("Starting deferred initialization...");
+  
+  // Seed teams and drivers
+  await storage.seedTeams();
+  await storage.seedDrivers();
+  console.log("Seeded teams and drivers");
+  
+  // Record initial price snapshots if no history exists
+  const existingHistory = await storage.getPriceHistory(undefined, 1);
+  if (existingHistory.length === 0) {
+    await storage.recordAllTeamPrices();
+    console.log("Seeded initial price history snapshots");
+  }
+
+  // Auto-start market maker bot to provide liquidity
+  try {
+    await marketMaker.start(30000); // 30 second interval
+    console.log("Market maker bot auto-started for liquidity");
+  } catch (error) {
+    console.error("Failed to start market maker bot:", error);
+  }
+
+  // Initialize championship pools for current season if they don't exist
+  try {
+    const currentSeason = await storage.getCurrentSeason();
+    if (currentSeason && currentSeason.status === "active") {
+      const existingTeamPool = await storage.getChampionshipPoolByType(currentSeason.id, "team");
+      const existingDriverPool = await storage.getChampionshipPoolByType(currentSeason.id, "driver");
+      
+      if (!existingTeamPool || !existingDriverPool) {
+        // Verify teams and drivers are seeded before pool initialization
+        const teams = await storage.getTeams();
+        const drivers = await storage.getDrivers();
+        
+        if (teams.length === 0) {
+          console.error("Cannot initialize pools: No teams found. Ensure seedTeams() ran successfully.");
+        } else if (drivers.length === 0) {
+          console.error("Cannot initialize pools: No drivers found. Ensure seedDrivers() ran successfully.");
+        } else {
+          const { teamPool, driverPool } = await storage.initializePoolsForSeason(currentSeason.id);
+          console.log("Initialized championship pools for season:", currentSeason.id);
+          console.log("  Team pool:", teamPool.id, `(${teams.length} outcomes)`);
+          console.log("  Driver pool:", driverPool.id, `(${drivers.length} outcomes)`);
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Failed to initialize championship pools:", error);
+  }
+  
+  console.log("Deferred initialization complete");
 }

@@ -1,5 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
-import { registerRoutes } from "./routes";
+import { registerRoutes, initializeAfterListen } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { storage } from "./storage";
@@ -92,8 +92,14 @@ app.use((req, res, next) => {
       host: "0.0.0.0",
       reusePort: true,
     },
-    () => {
+    async () => {
       log(`serving on port ${port}`);
+      
+      // Run deferred initialization (seeding, market maker, pools) after port opens
+      // This prevents deployment timeouts
+      initializeAfterListen().catch((error) => {
+        console.error("Deferred initialization failed:", error);
+      });
       
       // Start pool price recording job (every 60 seconds)
       setInterval(async () => {
