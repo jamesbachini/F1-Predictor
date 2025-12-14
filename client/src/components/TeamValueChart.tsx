@@ -10,6 +10,9 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
+  BarChart,
+  Bar,
+  Cell,
 } from "recharts";
 import { format } from "date-fns";
 
@@ -20,18 +23,68 @@ interface PriceHistoryRecord {
   recordedAt: string;
 }
 
-export function TeamValueChart() {
+interface PoolOutcome {
+  id: string;
+  poolId: string;
+  participantId: string;
+  participantName: string;
+  sharesOutstanding: number;
+  price: number;
+  probability: number;
+}
+
+interface ChampionshipPool {
+  id: string;
+  seasonId: string;
+  type: "team" | "driver";
+  status: string;
+  bParameter: number;
+  totalCollateral: number;
+  outcomes: PoolOutcome[];
+}
+
+interface DriverFromAPI {
+  id: string;
+  name: string;
+  shortName: string;
+  teamId: string;
+  number: number;
+  color: string;
+}
+
+interface TeamValueChartProps {
+  type?: "teams" | "drivers";
+}
+
+export function TeamValueChart({ type = "teams" }: TeamValueChartProps) {
   const { teams } = useMarket();
 
-  // Use CLOB price history from order fills (reflects actual trade prices)
-  const { data: priceHistory = [], isLoading } = useQuery<PriceHistoryRecord[]>({
+  // Fetch team price history for teams tab
+  const { data: priceHistory = [], isLoading: teamLoading } = useQuery<PriceHistoryRecord[]>({
     queryKey: ["/api/clob/price-history"],
     refetchInterval: 30000,
+    enabled: type === "teams",
   });
+
+  // Fetch driver pool for drivers tab
+  const { data: driverPool, isLoading: driverPoolLoading } = useQuery<ChampionshipPool>({
+    queryKey: ["/api/pools/type/driver"],
+    refetchInterval: 5000,
+    enabled: type === "drivers",
+  });
+
+  const { data: driversFromAPI = [] } = useQuery<DriverFromAPI[]>({
+    queryKey: ["/api/drivers"],
+    enabled: type === "drivers",
+  });
+
+  if (type === "drivers") {
+    return <DriverPriceChart driverPool={driverPool} drivers={driversFromAPI} isLoading={driverPoolLoading} />;
+  }
 
   const chartData = processChartData(priceHistory, teams);
 
-  if (isLoading) {
+  if (teamLoading) {
     return (
       <Card>
         <CardHeader>
@@ -117,6 +170,117 @@ export function TeamValueChart() {
                 style={{ backgroundColor: team.color }}
               />
               <span className="text-xs text-muted-foreground">{team.shortName}</span>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DriverPriceChart({ 
+  driverPool, 
+  drivers, 
+  isLoading 
+}: { 
+  driverPool?: ChampionshipPool; 
+  drivers: DriverFromAPI[]; 
+  isLoading: boolean;
+}) {
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Driver Championship Odds</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex h-[300px] items-center justify-center text-muted-foreground">
+            Loading driver data...
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!driverPool || !driverPool.outcomes || driverPool.outcomes.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Driver Championship Odds</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex h-[300px] items-center justify-center text-muted-foreground">
+            Driver market not yet available. Check back when the admin creates driver markets.
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Create chart data from driver pool outcomes
+  const chartData = driverPool.outcomes
+    .map((outcome) => {
+      const driver = drivers.find((d) => d.id === outcome.participantId);
+      return {
+        name: driver?.shortName || outcome.participantName.split(" ").pop() || outcome.participantName,
+        price: outcome.price,
+        probability: outcome.probability * 100,
+        color: driver?.color || "#888888",
+        fullName: outcome.participantName,
+      };
+    })
+    .sort((a, b) => b.price - a.price)
+    .slice(0, 10); // Show top 10 drivers
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg" data-testid="text-driver-chart-title">Driver Championship Odds (Top 10)</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 30, left: 60, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" className="stroke-muted" horizontal={false} />
+            <XAxis
+              type="number"
+              tick={{ fontSize: 12 }}
+              tickFormatter={(value) => `${(value * 100).toFixed(0)}%`}
+              domain={[0, "auto"]}
+              className="text-muted-foreground"
+            />
+            <YAxis
+              type="category"
+              dataKey="name"
+              tick={{ fontSize: 12 }}
+              width={55}
+              className="text-muted-foreground"
+            />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: "hsl(var(--card))",
+                border: "1px solid hsl(var(--border))",
+                borderRadius: "6px",
+              }}
+              formatter={(value: number) => [`${(value * 100).toFixed(1)}%`, "Win Probability"]}
+              labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName || ""}
+            />
+            <Bar dataKey="price" radius={[0, 4, 4, 0]}>
+              {chartData.map((entry, index) => (
+                <Cell key={`cell-${index}`} fill={entry.color} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+        <div className="mt-4 flex flex-wrap justify-center gap-3">
+          {chartData.slice(0, 5).map((driver) => (
+            <div key={driver.name} className="flex items-center gap-1.5">
+              <div
+                className="h-3 w-3 rounded-full"
+                style={{ backgroundColor: driver.color }}
+              />
+              <span className="text-xs text-muted-foreground">
+                {driver.name}: {(driver.price * 100).toFixed(1)}%
+              </span>
             </div>
           ))}
         </div>

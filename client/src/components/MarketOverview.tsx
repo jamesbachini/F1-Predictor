@@ -2,9 +2,11 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { TeamCard } from "./TeamCard";
 import { DriverCard, type Driver } from "./DriverCard";
+import { TeamValueChart } from "./TeamValueChart";
 import { useMarket, type F1Team } from "@/context/MarketContext";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Car, User } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Car, User, Trophy, DollarSign } from "lucide-react";
 
 interface MarketOverviewProps {
   onBuyTeam?: (team: F1Team) => void;
@@ -122,6 +124,29 @@ export function MarketOverview({ onBuyTeam, onBuyDriver }: MarketOverviewProps) 
           </TabsList>
 
           <TabsContent value="teams">
+            {/* Market Summary for Constructors */}
+            <Card className="mb-6">
+              <CardContent className="py-4">
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
+                      <Trophy className="h-5 w-5 text-primary" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Constructors Championship</p>
+                      <p className="font-semibold" data-testid="text-team-pool-name">Prize Pool</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <DollarSign className="h-5 w-5 text-green-500" />
+                    <span className="text-2xl font-bold" data-testid="text-team-prize-pool">
+                      ${teamPool?.totalCollateral?.toFixed(2) || "0.00"}
+                    </span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
               {sortedTeams.map((team) => (
                 <TeamCard
@@ -133,9 +158,37 @@ export function MarketOverview({ onBuyTeam, onBuyDriver }: MarketOverviewProps) 
                 />
               ))}
             </div>
+
+            {/* Chart for Teams */}
+            <div className="mt-8">
+              <TeamValueChart type="teams" />
+            </div>
           </TabsContent>
 
           <TabsContent value="drivers">
+            {/* Market Summary for Drivers */}
+            <Card className="mb-6">
+              <CardContent className="py-4">
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
+                      <User className="h-5 w-5 text-primary" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Drivers Championship</p>
+                      <p className="font-semibold" data-testid="text-driver-pool-name">Prize Pool</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <DollarSign className="h-5 w-5 text-green-500" />
+                    <span className="text-2xl font-bold" data-testid="text-driver-prize-pool">
+                      ${driverPool?.totalCollateral?.toFixed(2) || "0.00"}
+                    </span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
             {sortedDrivers.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground">
                 <User className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -154,6 +207,11 @@ export function MarketOverview({ onBuyTeam, onBuyDriver }: MarketOverviewProps) 
                 ))}
               </div>
             )}
+
+            {/* Chart for Drivers */}
+            <div className="mt-8">
+              <TeamValueChart type="drivers" />
+            </div>
           </TabsContent>
         </Tabs>
       </div>
