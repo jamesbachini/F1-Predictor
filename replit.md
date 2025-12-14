@@ -54,7 +54,7 @@ Legacy CLOB (Central Limit Order Book) system exists in `server/routes.ts` at `/
 ### Application Flow
 1. Guest users are auto-created on first visit (stored in localStorage)
 2. Users browse team market with real-time prices
-3. Users must connect Freighter wallet before purchasing shares
+3. Users must connect a Stellar wallet (Freighter, xBull, Albedo, Lobstr, etc.) before purchasing shares
 4. Wallet linking validates: address format, account existence on Stellar, USDC trustline
 5. Purchase shares through modal interface (wallet required)
 6. Portfolio tracks holdings, P&L, and total value
@@ -83,10 +83,18 @@ Legacy CLOB (Central Limit Order Book) system exists in `server/routes.ts` at `/
 
 ### Stellar/USDC Integration
 - @stellar/stellar-sdk for Stellar network operations
-- @stellar/freighter-api for web wallet integration
+- @creit-tech/stellar-wallets-kit for multi-wallet support (Freighter, xBull, Albedo, Lobstr, Rabet, Hana, Klever)
 - STELLAR_SECRET_KEY environment variable for testnet master wallet
 - Memo-based deposit tracking using user UUID (first 28 characters)
 - Demo credits with $5000 lifetime limit per user for testing
+
+### Wallet Integration (Stellar Wallet Kit)
+The app uses Stellar Wallet Kit for multi-wallet support:
+- **WalletContext**: Manages wallet state, connection, disconnection, and transaction signing
+- **Supported Wallets**: xBull, Albedo, Freighter, Rabet, Lobstr, Hana, Klever
+- **Initialization**: Uses `defaultModules()` from `@creit-tech/stellar-wallets-kit/modules/utils`
+- **State Persistence**: Wallet address saved to localStorage, restored on page load
+- **Event Handling**: Listens to `KitEventType.STATE_UPDATED` for connection/disconnection events
 
 ### Secure Buy Order Flow (Nonce-Based Verification)
 @deprecated - This flow is for the legacy CLOB system. The active pool system uses demo credits for trading.
