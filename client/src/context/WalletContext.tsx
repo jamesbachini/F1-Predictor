@@ -64,11 +64,16 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const openWalletModal = useCallback(() => {
-    const modal = document.createElement("div");
-    modal.id = "stellar-wallet-modal";
-    document.body.appendChild(modal);
-    StellarWalletsKit.createButton(modal);
+  const openWalletModal = useCallback(async () => {
+    try {
+      const { address } = await StellarWalletsKit.authModal();
+      if (address) {
+        setWalletAddress(address);
+        localStorage.setItem("stellar_wallet_address", address);
+      }
+    } catch (e) {
+      console.error("Wallet modal error:", e);
+    }
   }, []);
 
   const connectWallet = useCallback(async (): Promise<boolean> => {
@@ -81,9 +86,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         return false;
       }
 
-      StellarWalletsKit.setWallet(available[0].id);
-      
-      const { address } = await StellarWalletsKit.getAddress();
+      const { address } = await StellarWalletsKit.authModal();
       if (address) {
         setWalletAddress(address);
         localStorage.setItem("stellar_wallet_address", address);
