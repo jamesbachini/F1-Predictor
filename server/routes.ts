@@ -23,6 +23,7 @@ import { matchingEngine } from "./matchingEngine";
 import { marketMaker } from "./marketMaker";
 import { randomBytes } from "crypto";
 import { registerPoolRoutes } from "./pool-routes";
+import { registerProofRoutes } from "./proof-routes";
 
 // In-memory store for pending transaction expectations
 // Key: nonce, Value: { userId, walletAddress, collateralAmount, orderDetails, createdAt }
@@ -110,6 +111,9 @@ export async function registerRoutes(
 
   // Register LMSR pool routes
   registerPoolRoutes(app);
+  
+  // Register TLSNotary proof routes
+  registerProofRoutes(app);
 
   // ============ Teams/Market Routes ============
   

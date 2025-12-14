@@ -582,3 +582,48 @@ export type PoolPosition = typeof poolPositions.$inferSelect;
 export type PoolBuyRequest = z.infer<typeof poolBuySchema>;
 export type InsertPoolPayout = z.infer<typeof insertPoolPayoutSchema>;
 export type PoolPayout = typeof poolPayouts.$inferSelect;
+
+// =====================================================
+// zkTLS / TLSNotary Proof Tables
+// =====================================================
+
+// ZK Proofs - Stores TLSNotary proofs for trustless result verification
+export const zkProofs = pgTable("zk_proofs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  poolId: varchar("pool_id").notNull().references(() => championshipPools.id),
+  submittedBy: varchar("submitted_by").notNull().references(() => users.id),
+  serverDomain: text("server_domain").notNull(), // e.g., "formula1.com"
+  attestationData: text("attestation_data").notNull(), // JSON blob from TLSNotary
+  notaryPublicKey: text("notary_public_key").notNull(), // Public key of the Notary that signed
+  extractedWinnerId: varchar("extracted_winner_id"), // Parsed winner (team or driver ID)
+  extractedWinnerName: text("extracted_winner_name"), // Human-readable winner name
+  disclosedTranscript: text("disclosed_transcript"), // The revealed portion of the TLS transcript
+  verificationStatus: text("verification_status").notNull().default("pending"), // 'pending', 'verified', 'rejected'
+  rejectionReason: text("rejection_reason"), // Reason if verification failed
+  verifiedAt: timestamp("verified_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const zkProofsRelations = relations(zkProofs, ({ one }) => ({
+  pool: one(championshipPools, { fields: [zkProofs.poolId], references: [championshipPools.id] }),
+  submitter: one(users, { fields: [zkProofs.submittedBy], references: [users.id] }),
+}));
+
+// Insert schema for zk proofs
+export const insertZkProofSchema = createInsertSchema(zkProofs).omit({
+  id: true,
+  createdAt: true,
+  verifiedAt: true,
+});
+
+// Proof submission request schema
+export const submitProofSchema = z.object({
+  poolId: z.string(),
+  userId: z.string(),
+  proofJson: z.string(), // The full TLSNotary proof JSON
+});
+
+// ZK Proof Types
+export type InsertZkProof = z.infer<typeof insertZkProofSchema>;
+export type ZkProof = typeof zkProofs.$inferSelect;
+export type SubmitProofRequest = z.infer<typeof submitProofSchema>;

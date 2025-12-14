@@ -1,6 +1,6 @@
 import { 
   users, teams, drivers, holdings, transactions, deposits, priceHistory, seasons, payouts, markets, orderFills,
-  championshipPools, championshipOutcomes, poolTrades, poolPositions, poolPayouts,
+  championshipPools, championshipOutcomes, poolTrades, poolPositions, poolPayouts, zkProofs,
   type User, type InsertUser, 
   type Team, type InsertTeam,
   type Driver, type InsertDriver,
@@ -16,6 +16,7 @@ import {
   type PoolTrade, type InsertPoolTrade,
   type PoolPosition, type InsertPoolPosition,
   type PoolPayout, type InsertPoolPayout,
+  type ZkProof, type InsertZkProof,
   type BuySharesRequest,
   type SellSharesRequest
 } from "@shared/schema";
@@ -132,6 +133,12 @@ export interface IStorage {
   getPoolPayoutsByPool(poolId: string): Promise<PoolPayout[]>;
   getPoolPayoutsByUser(userId: string): Promise<PoolPayout[]>;
   updatePoolPayoutStatus(payoutId: string, status: string, stellarTxHash?: string): Promise<PoolPayout | undefined>;
+  
+  // ZK Proofs (TLSNotary)
+  createZkProof(proof: InsertZkProof): Promise<ZkProof>;
+  getZkProof(id: string): Promise<ZkProof | undefined>;
+  getZkProofsByPool(poolId: string): Promise<ZkProof[]>;
+  updateZkProofStatus(proofId: string, status: string, winnerId?: string, winnerName?: string, rejectionReason?: string): Promise<ZkProof | undefined>;
 }
 
 // Initial F1 2026 teams data - all teams start at equal $0.10 price
@@ -987,6 +994,43 @@ export class DatabaseStorage implements IStorage {
       .update(poolPayouts)
       .set(updateData)
       .where(eq(poolPayouts.id, payoutId))
+      .returning();
+    return updated || undefined;
+  }
+
+  // ============ ZK Proofs (TLSNotary) ============
+
+  async createZkProof(proof: InsertZkProof): Promise<ZkProof> {
+    const [created] = await db.insert(zkProofs).values(proof).returning();
+    return created;
+  }
+
+  async getZkProof(id: string): Promise<ZkProof | undefined> {
+    const [proof] = await db.select().from(zkProofs).where(eq(zkProofs.id, id));
+    return proof || undefined;
+  }
+
+  async getZkProofsByPool(poolId: string): Promise<ZkProof[]> {
+    return await db.select().from(zkProofs).where(eq(zkProofs.poolId, poolId)).orderBy(desc(zkProofs.createdAt));
+  }
+
+  async updateZkProofStatus(
+    proofId: string, 
+    status: string, 
+    winnerId?: string, 
+    winnerName?: string, 
+    rejectionReason?: string
+  ): Promise<ZkProof | undefined> {
+    const updateData: any = { verificationStatus: status };
+    if (winnerId) updateData.extractedWinnerId = winnerId;
+    if (winnerName) updateData.extractedWinnerName = winnerName;
+    if (rejectionReason) updateData.rejectionReason = rejectionReason;
+    if (status === "verified") updateData.verifiedAt = new Date();
+    
+    const [updated] = await db
+      .update(zkProofs)
+      .set(updateData)
+      .where(eq(zkProofs.id, proofId))
       .returning();
     return updated || undefined;
   }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -14,10 +14,11 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import { useMarket } from "@/context/MarketContext";
 import { useWallet } from "@/context/WalletContext";
-import { Trophy, Play, CheckCircle, AlertCircle, DollarSign, Lock, Bot, Power, PowerOff, Users } from "lucide-react";
+import { Trophy, Play, CheckCircle, AlertCircle, DollarSign, Lock, Bot, Power, PowerOff, Users, FileCode, Upload, Shield, XCircle, ArrowRight } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import type { Payout } from "@shared/schema";
+import { Textarea } from "@/components/ui/textarea";
+import type { Payout, ZkProof, ChampionshipPool } from "@shared/schema";
 
 interface DriverMarketsStatus {
   exists: boolean;
@@ -41,11 +42,29 @@ interface MarketMakerStatus {
   lastRunAt: string | null;
 }
 
+interface ProofPreview {
+  valid: boolean;
+  serverDomain: string;
+  notaryPublicKey: string;
+  extractedWinner: {
+    id: string | null;
+    name: string | null;
+    isTeamResult: boolean;
+  };
+  transcriptPreview: string;
+  cryptoVerification: string;
+  error?: string;
+}
+
 export function AdminPanel() {
   const { teams } = useMarket();
   const { walletAddress } = useWallet();
   const { toast } = useToast();
   const [selectedTeamId, setSelectedTeamId] = useState<string>("");
+  const [proofJson, setProofJson] = useState<string>("");
+  const [proofPreview, setProofPreview] = useState<ProofPreview | null>(null);
+  const [selectedPoolId, setSelectedPoolId] = useState<string>("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const adminApiRequest = async (url: string, method: string, data?: unknown) => {
     const res = await fetch(url, {
@@ -123,6 +142,102 @@ export function AdminPanel() {
     },
     enabled: !!season?.exists && season.status === "active",
   });
+
+  const { data: pools = [] } = useQuery<ChampionshipPool[]>({
+    queryKey: ["/api/pools"],
+  });
+
+  const { data: zkProofs = [], refetch: refetchProofs } = useQuery<ZkProof[]>({
+    queryKey: ["/api/proofs/pool", selectedPoolId],
+    queryFn: async () => {
+      if (!selectedPoolId) return [];
+      return adminApiRequest(`/api/proofs/pool/${selectedPoolId}`, "GET");
+    },
+    enabled: !!selectedPoolId,
+  });
+
+  const previewProofMutation = useMutation({
+    mutationFn: async (json: string) => {
+      return adminApiRequest("/api/proofs/preview", "POST", { proofJson: json });
+    },
+    onSuccess: (data: ProofPreview) => {
+      setProofPreview(data);
+    },
+    onError: (error: any) => {
+      setProofPreview({ 
+        valid: false, 
+        serverDomain: "", 
+        notaryPublicKey: "", 
+        extractedWinner: { id: null, name: null, isTeamResult: false },
+        transcriptPreview: "",
+        cryptoVerification: "failed",
+        error: error.message 
+      });
+    },
+  });
+
+  const submitProofMutation = useMutation({
+    mutationFn: async ({ poolId, json }: { poolId: string; json: string }) => {
+      return adminApiRequest("/api/proofs/submit", "POST", { 
+        poolId, 
+        userId: "admin", 
+        proofJson: json 
+      });
+    },
+    onSuccess: () => {
+      toast({ title: "Proof Submitted", description: "zkTLS proof has been submitted for verification." });
+      setProofJson("");
+      setProofPreview(null);
+      refetchProofs();
+    },
+    onError: (error: any) => {
+      toast({ title: "Submission Failed", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const verifyProofMutation = useMutation({
+    mutationFn: async (proofId: string) => {
+      return adminApiRequest(`/api/proofs/${proofId}/verify`, "POST", {});
+    },
+    onSuccess: (data: any) => {
+      if (data.success) {
+        toast({ title: "Proof Verified", description: `Winner extracted: ${data.extractedWinner?.name || data.extractedWinner?.id}` });
+      } else {
+        toast({ title: "Verification Failed", description: data.reason, variant: "destructive" });
+      }
+      refetchProofs();
+    },
+    onError: (error: any) => {
+      toast({ title: "Verification Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const resolvePoolMutation = useMutation({
+    mutationFn: async (proofId: string) => {
+      return adminApiRequest(`/api/proofs/${proofId}/resolve-pool`, "POST", {});
+    },
+    onSuccess: (data: any) => {
+      toast({ title: "Pool Resolved", description: data.message });
+      queryClient.invalidateQueries({ queryKey: ["/api/pools"] });
+      refetchProofs();
+    },
+    onError: (error: any) => {
+      toast({ title: "Resolution Failed", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const content = e.target?.result as string;
+        setProofJson(content);
+        previewProofMutation.mutate(content);
+      };
+      reader.readAsText(file);
+    }
+  };
 
   const createDriverMarketsMutation = useMutation({
     mutationFn: async () => {
@@ -441,6 +556,171 @@ export function AdminPanel() {
             </div>
           </div>
         )}
+
+        {/* zkTLS Proof Verification Section */}
+        <div className="border rounded-md p-4 space-y-4">
+          <div className="flex items-center gap-2">
+            <Shield className="h-5 w-5 text-muted-foreground" />
+            <div>
+              <p className="font-medium">zkTLS Proof Verification</p>
+              <p className="text-sm text-muted-foreground">
+                Submit TLSNotary proofs from formula1.com to verify championship results
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex gap-2 flex-wrap">
+              <Select value={selectedPoolId} onValueChange={setSelectedPoolId}>
+                <SelectTrigger className="w-[250px]" data-testid="select-pool">
+                  <SelectValue placeholder="Select prediction pool" />
+                </SelectTrigger>
+                <SelectContent>
+                  {pools.map((pool) => (
+                    <SelectItem key={pool.id} value={pool.id}>
+                      {pool.type} Championship ({pool.status})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {selectedPoolId && (
+              <>
+                <div className="space-y-2">
+                  <Label>Upload TLSNotary Proof</Label>
+                  <div className="flex gap-2 flex-wrap">
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      accept=".json"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                      data-testid="input-proof-file"
+                    />
+                    <Button
+                      variant="outline"
+                      onClick={() => fileInputRef.current?.click()}
+                      data-testid="button-upload-proof"
+                    >
+                      <Upload className="h-4 w-4 mr-2" />
+                      Choose File
+                    </Button>
+                    {proofJson && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => {
+                          setProofJson("");
+                          setProofPreview(null);
+                          if (fileInputRef.current) fileInputRef.current.value = "";
+                        }}
+                        data-testid="button-clear-proof"
+                      >
+                        <XCircle className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {proofPreview && (
+                  <div className={`border rounded-md p-3 space-y-2 ${proofPreview.valid ? "border-green-500/50 bg-green-500/5" : "border-red-500/50 bg-red-500/5"}`}>
+                    <div className="flex items-center gap-2">
+                      {proofPreview.valid ? (
+                        <CheckCircle className="h-4 w-4 text-green-500" />
+                      ) : (
+                        <XCircle className="h-4 w-4 text-red-500" />
+                      )}
+                      <span className="font-medium">
+                        {proofPreview.valid ? "Valid Proof Structure" : "Invalid Proof"}
+                      </span>
+                    </div>
+                    {proofPreview.error ? (
+                      <p className="text-sm text-red-600">{proofPreview.error}</p>
+                    ) : (
+                      <div className="text-sm space-y-1">
+                        <p><span className="text-muted-foreground">Server:</span> {proofPreview.serverDomain}</p>
+                        <p><span className="text-muted-foreground">Notary Key:</span> {proofPreview.notaryPublicKey}</p>
+                        {proofPreview.extractedWinner.name && (
+                          <p>
+                            <span className="text-muted-foreground">Extracted Winner:</span>{" "}
+                            <Badge variant="secondary" className="ml-1">
+                              {proofPreview.extractedWinner.name} ({proofPreview.extractedWinner.isTeamResult ? "Team" : "Driver"})
+                            </Badge>
+                          </p>
+                        )}
+                        <p><span className="text-muted-foreground">Crypto Check:</span> {proofPreview.cryptoVerification}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {proofJson && proofPreview?.valid && (
+                  <Button
+                    onClick={() => submitProofMutation.mutate({ poolId: selectedPoolId, json: proofJson })}
+                    disabled={submitProofMutation.isPending}
+                    data-testid="button-submit-proof"
+                  >
+                    <FileCode className="h-4 w-4 mr-2" />
+                    {submitProofMutation.isPending ? "Submitting..." : "Submit Proof"}
+                  </Button>
+                )}
+
+                {zkProofs.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Submitted Proofs</p>
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {zkProofs.map((proof) => (
+                        <div
+                          key={proof.id}
+                          className="flex items-center justify-between gap-2 text-sm p-2 rounded bg-muted/50"
+                          data-testid={`proof-row-${proof.id}`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Badge
+                              variant={
+                                proof.verificationStatus === "verified" ? "default" :
+                                proof.verificationStatus === "rejected" ? "destructive" : "secondary"
+                              }
+                            >
+                              {proof.verificationStatus}
+                            </Badge>
+                            <span className="truncate">{proof.extractedWinnerName || proof.extractedWinnerId || "Unknown"}</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            {proof.verificationStatus === "pending" && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => verifyProofMutation.mutate(proof.id)}
+                                disabled={verifyProofMutation.isPending}
+                                data-testid={`button-verify-proof-${proof.id}`}
+                              >
+                                <Shield className="h-3 w-3 mr-1" />
+                                Verify
+                              </Button>
+                            )}
+                            {proof.verificationStatus === "verified" && (
+                              <Button
+                                size="sm"
+                                onClick={() => resolvePoolMutation.mutate(proof.id)}
+                                disabled={resolvePoolMutation.isPending}
+                                data-testid={`button-resolve-pool-${proof.id}`}
+                              >
+                                <ArrowRight className="h-3 w-3 mr-1" />
+                                Resolve Pool
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
       </CardContent>
     </Card>
   );
