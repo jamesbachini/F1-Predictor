@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { StellarWalletsKit, KitEventType } from "@creit-tech/stellar-wallets-kit";
 import { defaultModules } from "@creit-tech/stellar-wallets-kit/modules/utils";
 
@@ -7,6 +7,7 @@ interface WalletContextType {
   isWalletAvailable: boolean | null;
   isFreighterInstalled: boolean | null;
   isConnecting: boolean;
+  isKitReady: boolean;
   connectWallet: () => Promise<boolean>;
   disconnectWallet: () => void;
   signTransaction: (xdr: string, opts?: { networkPassphrase?: string }) => Promise<{ signedTxXdr: string }>;
@@ -21,18 +22,22 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [isWalletAvailable, setIsWalletAvailable] = useState<boolean | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [isKitReady, setIsKitReady] = useState(false);
+  const unsubscribeRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    if (!kitInitialized) {
-      StellarWalletsKit.init({
-        modules: defaultModules(),
-        network: "TESTNET" as any,
-      });
-      kitInitialized = true;
-    }
-
-    const checkWallets = async () => {
+    const initializeKit = async () => {
       try {
+        if (!kitInitialized) {
+          StellarWalletsKit.init({
+            modules: defaultModules(),
+            network: "TESTNET" as any,
+          });
+          kitInitialized = true;
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+        setIsKitReady(true);
+
         const wallets = await StellarWalletsKit.refreshSupportedWallets();
         const hasAvailable = wallets.some(w => w.isAvailable);
         setIsWalletAvailable(hasAvailable);
@@ -41,26 +46,29 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         if (savedAddress) {
           setWalletAddress(savedAddress);
         }
+
+        unsubscribeRef.current = StellarWalletsKit.on(KitEventType.STATE_UPDATED, (event) => {
+          if (event.payload.address) {
+            setWalletAddress(event.payload.address);
+            localStorage.setItem("stellar_wallet_address", event.payload.address);
+          } else {
+            setWalletAddress(null);
+            localStorage.removeItem("stellar_wallet_address");
+          }
+        });
       } catch (e) {
-        console.error("Failed to check wallets:", e);
+        console.error("Failed to initialize wallet kit:", e);
         setIsWalletAvailable(false);
+        setIsKitReady(true);
       }
     };
 
-    checkWallets();
-
-    const unsubscribe = StellarWalletsKit.on(KitEventType.STATE_UPDATED, (event) => {
-      if (event.payload.address) {
-        setWalletAddress(event.payload.address);
-        localStorage.setItem("stellar_wallet_address", event.payload.address);
-      } else {
-        setWalletAddress(null);
-        localStorage.removeItem("stellar_wallet_address");
-      }
-    });
+    initializeKit();
 
     return () => {
-      unsubscribe();
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+      }
     };
   }, []);
 
@@ -122,6 +130,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         isWalletAvailable,
         isFreighterInstalled: isWalletAvailable,
         isConnecting,
+        isKitReady,
         connectWallet,
         disconnectWallet,
         signTransaction,
