@@ -479,6 +479,110 @@ export function registerPoolRoutes(app: Express): void {
     }
   });
 
+  // Demo sell endpoint - allows selling shares to get demo credits back
+  app.post("/api/pools/:poolId/demo-sell", async (req, res) => {
+    try {
+      const { poolId } = req.params;
+      const { outcomeId, userId, shares } = req.body;
+
+      if (!outcomeId || !userId || !shares || shares <= 0) {
+        return res.status(400).json({ error: "Missing or invalid required fields" });
+      }
+
+      const pool = await storage.getChampionshipPool(poolId);
+      if (!pool) {
+        return res.status(404).json({ error: "Pool not found" });
+      }
+
+      if (pool.status !== "active") {
+        return res.status(403).json({ error: "Pool is not active" });
+      }
+
+      // Get user's position
+      const position = await storage.getPoolPosition(userId, poolId, outcomeId);
+      if (!position || position.sharesOwned < shares) {
+        return res.status(400).json({ 
+          error: `Insufficient shares. You own ${position?.sharesOwned || 0} shares.` 
+        });
+      }
+
+      // Get outcomes and calculate sale proceeds
+      const outcomes = await storage.getChampionshipOutcomes(pool.id);
+      const outcomeIndex = outcomes.findIndex(o => o.id === outcomeId);
+      
+      if (outcomeIndex === -1) {
+        return res.status(404).json({ error: "Outcome not found" });
+      }
+
+      const currentShares = outcomes.map(o => o.sharesOutstanding);
+      // Selling is negative shares, returns negative cost (proceeds)
+      const proceeds = -getCostForShares(currentShares, pool.bParameter, outcomeIndex, -shares);
+
+      if (proceeds <= 0) {
+        return res.status(400).json({ error: "Invalid share amount" });
+      }
+
+      // Get user and add proceeds to balance
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Add proceeds to user balance
+      await storage.updateUserBalance(userId, user.balance + proceeds);
+
+      // Update outcome shares outstanding (subtract shares)
+      await storage.updateOutcomeShares(outcomeId, -shares);
+
+      // Update pool total collateral (subtract proceeds)
+      await storage.updatePoolCollateral(poolId, -proceeds);
+
+      // Get price after sale
+      const newShares = [...currentShares];
+      newShares[outcomeIndex] -= shares;
+      const priceAtTrade = getPrice(newShares, pool.bParameter, outcomeIndex);
+
+      // Record the trade (negative shares for sell)
+      const trade = await storage.createPoolTrade({
+        poolId,
+        outcomeId,
+        userId,
+        sharesAmount: -shares,
+        collateralCost: -proceeds,
+        priceAtTrade,
+      });
+
+      // Update user's position
+      const newSharesOwned = position.sharesOwned - shares;
+      const costReduction = (shares / position.sharesOwned) * position.totalCost;
+      const newTotalCost = position.totalCost - costReduction;
+
+      if (newSharesOwned <= 0) {
+        // Delete position if no shares left
+        await storage.deletePoolPosition(position.id);
+      } else {
+        // Update position with reduced shares
+        await storage.updatePoolPosition(position.id, {
+          sharesOwned: newSharesOwned,
+          totalCost: newTotalCost,
+        });
+      }
+
+      res.json({
+        success: true,
+        trade,
+        shares,
+        proceeds,
+        priceAtTrade,
+        newBalance: user.balance + proceeds,
+        message: "Demo shares sold successfully"
+      });
+    } catch (error: any) {
+      console.error("Demo sell error:", error);
+      res.status(400).json({ error: error.message || "Failed to complete demo sale" });
+    }
+  });
+
   // Get user's pool positions
   app.get("/api/pools/positions/:userId", async (req, res) => {
     try {
@@ -505,8 +609,20 @@ export function registerPoolRoutes(app: Express): void {
           ? (position.sharesOwned / outcome.sharesOutstanding) * pool.totalCollateral
           : 0;
 
+        // Look up participant name based on pool type
+        let participantName = "Unknown";
+        if (pool.type === 'team') {
+          const team = await storage.getTeam(outcome.participantId);
+          participantName = team?.name || "Unknown Team";
+        } else if (pool.type === 'driver') {
+          const driver = await storage.getDriver(outcome.participantId);
+          participantName = driver?.name || "Unknown Driver";
+        }
+
         return {
           ...position,
+          participantName,
+          participantId: outcome.participantId,
           currentPrice,
           currentValue,
           pnl,

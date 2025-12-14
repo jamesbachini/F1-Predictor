@@ -1,4 +1,4 @@
-import { Wallet, TrendingUp, Menu, Plus, Loader2, BarChart3, Briefcase } from "lucide-react";
+import { Wallet, TrendingUp, Menu, Plus, Loader2, Briefcase } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -53,16 +53,6 @@ export function Header() {
                 Positions
               </Button>
             </Link>
-            <Link href="/markets">
-              <Button
-                variant={location === "/markets" ? "secondary" : "ghost"}
-                size="sm"
-                data-testid="button-nav-order-book"
-              >
-                <BarChart3 className="mr-1 h-4 w-4" />
-                Order Book
-              </Button>
-            </Link>
           </nav>
         </div>
 
@@ -114,17 +104,6 @@ export function Header() {
                   >
                     <Briefcase className="mr-2 h-4 w-4" />
                     Positions
-                  </Button>
-                </Link>
-                <Link href="/markets">
-                  <Button
-                    variant={location === "/markets" ? "secondary" : "ghost"}
-                    className="justify-start w-full"
-                    onClick={() => setMobileMenuOpen(false)}
-                    data-testid="button-mobile-nav-order-book"
-                  >
-                    <BarChart3 className="mr-2 h-4 w-4" />
-                    Order Book
                   </Button>
                 </Link>
               </nav>

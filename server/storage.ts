@@ -122,6 +122,8 @@ export interface IStorage {
   getPoolPositionsByUser(userId: string): Promise<PoolPosition[]>;
   getPoolPositionsByPool(poolId: string): Promise<PoolPosition[]>;
   upsertPoolPosition(position: InsertPoolPosition & { poolId: string; outcomeId: string; userId: string }): Promise<PoolPosition>;
+  deletePoolPosition(positionId: string): Promise<void>;
+  updatePoolPosition(positionId: string, updates: { sharesOwned: number; totalCost: number }): Promise<PoolPosition | undefined>;
   
   // Pool Initialization
   initializePoolsForSeason(seasonId: string): Promise<{ teamPool: ChampionshipPool; driverPool: ChampionshipPool }>;
@@ -904,6 +906,23 @@ export class DatabaseStorage implements IStorage {
       const [created] = await db.insert(poolPositions).values(position).returning();
       return created;
     }
+  }
+
+  async deletePoolPosition(positionId: string): Promise<void> {
+    await db.delete(poolPositions).where(eq(poolPositions.id, positionId));
+  }
+
+  async updatePoolPosition(positionId: string, updates: { sharesOwned: number; totalCost: number }): Promise<PoolPosition | undefined> {
+    const [updated] = await db
+      .update(poolPositions)
+      .set({
+        sharesOwned: updates.sharesOwned,
+        totalCost: updates.totalCost,
+        updatedAt: new Date(),
+      })
+      .where(eq(poolPositions.id, positionId))
+      .returning();
+    return updated;
   }
 
   // ============ Pool Initialization ============
