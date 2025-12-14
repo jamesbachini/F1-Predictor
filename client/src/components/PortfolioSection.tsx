@@ -3,6 +3,7 @@ import { TrendingUp, TrendingDown, Wallet, PiggyBank, BarChart3, Loader2, Clock,
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useMarket } from "@/context/MarketContext";
 import { useWallet } from "@/context/WalletContext";
@@ -72,6 +73,7 @@ export function PortfolioSection() {
   const [sellModalOpen, setSellModalOpen] = useState(false);
   const [selectedPosition, setSelectedPosition] = useState<PoolPosition | null>(null);
   const [sellShares, setSellShares] = useState(1);
+  const [sellSharesInput, setSellSharesInput] = useState("1");
   const [isSelling, setIsSelling] = useState(false);
 
   const { data: usdcBalance, isLoading: isLoadingBalance } = useQuery<USDCBalanceResponse>({
@@ -126,7 +128,9 @@ export function PortfolioSection() {
 
   const openSellModal = (position: PoolPosition) => {
     setSelectedPosition(position);
-    setSellShares(Math.min(10, Math.floor(position.sharesOwned)));
+    const defaultShares = Math.min(10, Math.floor(position.sharesOwned));
+    setSellShares(defaultShares);
+    setSellSharesInput(defaultShares.toString());
     setSellModalOpen(true);
   };
 
@@ -134,6 +138,37 @@ export function PortfolioSection() {
     setSellModalOpen(false);
     setSelectedPosition(null);
     setSellShares(1);
+    setSellSharesInput("1");
+  };
+
+  const handleSellSharesInputChange = (value: string) => {
+    setSellSharesInput(value);
+    const numValue = parseInt(value, 10);
+    if (!isNaN(numValue) && numValue > 0 && selectedPosition && numValue <= Math.floor(selectedPosition.sharesOwned)) {
+      setSellShares(numValue);
+    }
+  };
+
+  const handleSellSharesInputBlur = () => {
+    if (!selectedPosition) return;
+    const numValue = parseInt(sellSharesInput, 10);
+    const maxShares = Math.floor(selectedPosition.sharesOwned);
+    if (isNaN(numValue) || numValue <= 0) {
+      setSellShares(1);
+      setSellSharesInput("1");
+    } else if (numValue > maxShares) {
+      setSellShares(maxShares);
+      setSellSharesInput(maxShares.toString());
+    } else {
+      setSellSharesInput(numValue.toString());
+    }
+  };
+
+  const handleSellSharesButtonChange = (newValue: number) => {
+    if (!selectedPosition) return;
+    const validValue = Math.max(1, Math.min(newValue, Math.floor(selectedPosition.sharesOwned)));
+    setSellShares(validValue);
+    setSellSharesInput(validValue.toString());
   };
 
   const handleSell = async () => {
@@ -441,19 +476,26 @@ export function PortfolioSection() {
                   <Button
                     size="icon"
                     variant="outline"
-                    onClick={() => setSellShares(Math.max(1, sellShares - 1))}
+                    onClick={() => handleSellSharesButtonChange(sellShares - 1)}
                     disabled={sellShares <= 1}
                     data-testid="button-decrease-sell-shares"
                   >
                     <Minus className="h-4 w-4" />
                   </Button>
-                  <span className="w-20 text-center text-2xl font-bold tabular-nums" data-testid="text-sell-shares">
-                    {sellShares}
-                  </span>
+                  <Input
+                    type="number"
+                    min="1"
+                    max={Math.floor(selectedPosition.sharesOwned)}
+                    value={sellSharesInput}
+                    onChange={(e) => handleSellSharesInputChange(e.target.value)}
+                    onBlur={handleSellSharesInputBlur}
+                    className="w-24 text-center text-2xl font-bold tabular-nums"
+                    data-testid="input-sell-shares"
+                  />
                   <Button
                     size="icon"
                     variant="outline"
-                    onClick={() => setSellShares(Math.min(Math.floor(selectedPosition.sharesOwned), sellShares + 1))}
+                    onClick={() => handleSellSharesButtonChange(sellShares + 1)}
                     disabled={sellShares >= Math.floor(selectedPosition.sharesOwned)}
                     data-testid="button-increase-sell-shares"
                   >
@@ -464,7 +506,7 @@ export function PortfolioSection() {
                   <Button
                     size="sm"
                     variant="secondary"
-                    onClick={() => setSellShares(Math.floor(selectedPosition.sharesOwned))}
+                    onClick={() => handleSellSharesButtonChange(Math.floor(selectedPosition.sharesOwned))}
                     data-testid="button-sell-all"
                   >
                     Sell All
