@@ -74,10 +74,6 @@ export default function Home() {
     if (isSeasonConcluded) {
       return;
     }
-    if (!walletAddress) {
-      setConnectWalletModalOpen(true);
-      return;
-    }
     if (!teamPool) {
       return;
     }
@@ -89,10 +85,6 @@ export default function Home() {
 
   const handleBuyDriver = (driver: Driver) => {
     if (isSeasonConcluded) {
-      return;
-    }
-    if (!walletAddress) {
-      setConnectWalletModalOpen(true);
       return;
     }
     if (!driverPool) {
