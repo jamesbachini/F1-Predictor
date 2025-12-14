@@ -6,7 +6,6 @@ import { MarketOverview } from "@/components/MarketOverview";
 import { PoolBuyModal } from "@/components/PoolBuyModal";
 import { HowItWorks } from "@/components/HowItWorks";
 import { MarketStats } from "@/components/MarketStats";
-import { TeamValueChart } from "@/components/TeamValueChart";
 import { DepositModal } from "@/components/DepositModal";
 import { useWallet } from "@/context/WalletContext";
 import { useMarket } from "@/context/MarketContext";
@@ -133,11 +132,6 @@ export default function Home() {
       <div id="market-section">
         <MarketOverview onBuyTeam={handleBuyTeam} onBuyDriver={handleBuyDriver} />
       </div>
-      <section className="py-8">
-        <div className="mx-auto max-w-7xl px-4">
-          <TeamValueChart />
-        </div>
-      </section>
       <HowItWorks />
       <MarketStats />
 
