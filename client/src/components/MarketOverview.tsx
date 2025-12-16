@@ -26,6 +26,7 @@ interface PoolOutcome {
   sharesOutstanding: number;
   price: number;
   probability: number;
+  priceChange: number;
 }
 
 interface ChampionshipPool {
@@ -79,7 +80,7 @@ export function MarketOverview({ onBuyTeam, onBuyDriver }: MarketOverviewProps) 
       return {
         ...team,
         price: outcome.price,
-        priceChange: 0, // Pool prices are probabilities, no historical change tracking yet
+        priceChange: outcome.priceChange ?? 0,
       };
     }
     return team;
@@ -93,7 +94,7 @@ export function MarketOverview({ onBuyTeam, onBuyDriver }: MarketOverviewProps) 
     return {
       ...driver,
       price: outcome?.price ?? 0.10,
-      priceChange: 0,
+      priceChange: outcome?.priceChange ?? 0,
     };
   });
 

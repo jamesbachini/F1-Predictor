@@ -78,12 +78,24 @@ export function registerPoolRoutes(app: Express): void {
       const shares = outcomes.map(o => o.sharesOutstanding);
       const prices = getPrices(shares, pool.bParameter);
 
-      // Enrich outcomes with prices
-      const outcomesWithPrices = outcomes.map((outcome, index) => ({
-        ...outcome,
-        price: prices[index],
-        probability: prices[index],
-      }));
+      // Get prices from 24 hours ago for calculating price change
+      const prices24hAgo = await storage.getPricesFromTimeAgo(pool.id, 24);
+
+      // Enrich outcomes with prices and 24h change
+      const outcomesWithPrices = outcomes.map((outcome, index) => {
+        const currentPrice = prices[index];
+        const oldPrice = prices24hAgo.get(outcome.participantId);
+        let priceChange = 0;
+        if (oldPrice && oldPrice > 0) {
+          priceChange = ((currentPrice - oldPrice) / oldPrice) * 100;
+        }
+        return {
+          ...outcome,
+          price: currentPrice,
+          probability: currentPrice,
+          priceChange,
+        };
+      });
 
       res.json({
         ...pool,
@@ -116,11 +128,23 @@ export function registerPoolRoutes(app: Express): void {
       const shares = outcomes.map(o => o.sharesOutstanding);
       const prices = getPrices(shares, pool.bParameter);
 
-      const outcomesWithPrices = outcomes.map((outcome, index) => ({
-        ...outcome,
-        price: prices[index],
-        probability: prices[index],
-      }));
+      // Get prices from 24 hours ago for calculating price change
+      const prices24hAgo = await storage.getPricesFromTimeAgo(pool.id, 24);
+
+      const outcomesWithPrices = outcomes.map((outcome, index) => {
+        const currentPrice = prices[index];
+        const oldPrice = prices24hAgo.get(outcome.participantId);
+        let priceChange = 0;
+        if (oldPrice && oldPrice > 0) {
+          priceChange = ((currentPrice - oldPrice) / oldPrice) * 100;
+        }
+        return {
+          ...outcome,
+          price: currentPrice,
+          probability: currentPrice,
+          priceChange,
+        };
+      });
 
       res.json({
         ...pool,
@@ -143,11 +167,23 @@ export function registerPoolRoutes(app: Express): void {
       const shares = outcomes.map(o => o.sharesOutstanding);
       const prices = getPrices(shares, pool.bParameter);
 
-      const outcomesWithPrices = outcomes.map((outcome, index) => ({
-        ...outcome,
-        price: prices[index],
-        probability: prices[index],
-      }));
+      // Get prices from 24 hours ago for calculating price change
+      const prices24hAgo = await storage.getPricesFromTimeAgo(pool.id, 24);
+
+      const outcomesWithPrices = outcomes.map((outcome, index) => {
+        const currentPrice = prices[index];
+        const oldPrice = prices24hAgo.get(outcome.participantId);
+        let priceChange = 0;
+        if (oldPrice && oldPrice > 0) {
+          priceChange = ((currentPrice - oldPrice) / oldPrice) * 100;
+        }
+        return {
+          ...outcome,
+          price: currentPrice,
+          probability: currentPrice,
+          priceChange,
+        };
+      });
 
       res.json(outcomesWithPrices);
     } catch (error) {

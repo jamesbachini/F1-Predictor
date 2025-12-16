@@ -146,6 +146,7 @@ export interface IStorage {
   // Pool Price History
   recordPoolPrices(poolId: string): Promise<void>;
   getPoolPriceHistory(poolId: string, limit?: number): Promise<PoolPriceHistory[]>;
+  getPricesFromTimeAgo(poolId: string, hoursAgo: number): Promise<Map<string, number>>;
 }
 
 // Initial F1 2026 teams data - all teams start at equal $0.10 price
@@ -1096,6 +1097,49 @@ export class DatabaseStorage implements IStorage {
       return await query.limit(limit);
     }
     return await query;
+  }
+
+  async getPricesFromTimeAgo(poolId: string, hoursAgo: number): Promise<Map<string, number>> {
+    const targetTime = new Date(Date.now() - hoursAgo * 60 * 60 * 1000);
+    
+    // Get the most recent price record for each outcome that's older than targetTime
+    // This gives us the price from approximately 24 hours ago
+    const priceRecords = await db
+      .select()
+      .from(poolPriceHistory)
+      .where(
+        and(
+          eq(poolPriceHistory.poolId, poolId),
+          sql`${poolPriceHistory.recordedAt} <= ${targetTime}`
+        )
+      )
+      .orderBy(desc(poolPriceHistory.recordedAt));
+    
+    // Group by participantId and take the most recent (first) for each
+    const priceMap = new Map<string, number>();
+    for (const record of priceRecords) {
+      if (!priceMap.has(record.participantId)) {
+        priceMap.set(record.participantId, record.price);
+      }
+    }
+    
+    // If we have no historical data from 24h ago, fallback to the earliest available record
+    // This handles new pools where we don't have 24 hours of history yet
+    if (priceMap.size === 0) {
+      const earliestRecords = await db
+        .select()
+        .from(poolPriceHistory)
+        .where(eq(poolPriceHistory.poolId, poolId))
+        .orderBy(asc(poolPriceHistory.recordedAt));
+      
+      for (const record of earliestRecords) {
+        if (!priceMap.has(record.participantId)) {
+          priceMap.set(record.participantId, record.price);
+        }
+      }
+    }
+    
+    return priceMap;
   }
 }
 
