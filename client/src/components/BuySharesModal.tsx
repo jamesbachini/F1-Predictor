@@ -14,12 +14,6 @@ import { useWallet } from "@/context/WalletContext";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-interface USDCBalanceResponse {
-  address: string;
-  balance: string;
-  asset: string;
-}
-
 interface BuySharesModalProps {
   team: F1Team | null;
   open: boolean;
@@ -29,17 +23,21 @@ interface BuySharesModalProps {
 export function BuySharesModal({ team, open, onOpenChange }: BuySharesModalProps) {
   const [quantity, setQuantity] = useState(1);
   const { buyShares } = useMarket();
-  const { walletAddress } = useWallet();
+  const { walletAddress, getUsdcBalance } = useWallet();
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: usdcBalance, isLoading: isLoadingBalance } = useQuery<USDCBalanceResponse>({
-    queryKey: ["/api/stellar/balance", walletAddress],
+  const { data: usdcBalance, isLoading: isLoadingBalance } = useQuery({
+    queryKey: ["polygon-usdc-balance", walletAddress],
+    queryFn: async () => {
+      if (!walletAddress) return "0";
+      return await getUsdcBalance();
+    },
     enabled: !!walletAddress && open,
   });
 
   const walletConnected = !!walletAddress;
-  const availableBalance = parseFloat(usdcBalance?.balance || "0");
+  const availableBalance = parseFloat(usdcBalance || "0");
 
   if (!team) return null;
 
@@ -52,7 +50,7 @@ export function BuySharesModal({ team, open, onOpenChange }: BuySharesModalProps
     
     const success = await buyShares(team.id, quantity);
     if (success) {
-      queryClient.invalidateQueries({ queryKey: ["/api/stellar/balance", walletAddress] });
+      queryClient.invalidateQueries({ queryKey: ["polygon-usdc-balance", walletAddress] });
       toast({
         title: "Purchase successful!",
         description: `You bought ${quantity} shares of ${team.name} for $${totalCost.toFixed(2)}`,
@@ -167,7 +165,7 @@ export function BuySharesModal({ team, open, onOpenChange }: BuySharesModalProps
           {!walletConnected && (
             <div className="flex items-center gap-2 rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-600 dark:text-amber-400">
               <Wallet className="h-4 w-4 shrink-0" />
-              <span>Please connect your Freighter wallet to purchase shares.</span>
+              <span>Please connect your wallet to purchase shares.</span>
             </div>
           )}
         </div>

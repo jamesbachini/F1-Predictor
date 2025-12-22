@@ -20,7 +20,7 @@ export default function Admin() {
   if (!walletAddress) {
     return (
       <div className="min-h-screen bg-background">
-        <Header onNavigate={() => {}} activeSection="market" />
+        <Header />
         <div className="flex items-center justify-center py-20">
           <Card className="max-w-md w-full mx-4">
             <CardHeader className="text-center">
@@ -31,7 +31,7 @@ export default function Admin() {
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-center text-muted-foreground">
-                You need to connect your Freighter wallet to access the admin panel. 
+                You need to connect your wallet to access the admin panel. 
                 Only authorized wallet addresses can view this page.
               </p>
               <Button 
@@ -40,7 +40,7 @@ export default function Admin() {
                 className="w-full"
                 data-testid="button-connect-admin"
               >
-                {isConnecting ? "Connecting..." : "Connect Freighter Wallet"}
+                {isConnecting ? "Connecting..." : "Connect Wallet"}
               </Button>
               <div className="text-center">
                 <Link href="/">
@@ -59,7 +59,7 @@ export default function Admin() {
   if (checkingAdmin) {
     return (
       <div className="min-h-screen bg-background">
-        <Header onNavigate={() => {}} activeSection="market" />
+        <Header />
         <div className="flex items-center justify-center py-20">
           <div className="text-muted-foreground">Verifying admin access...</div>
         </div>
@@ -70,7 +70,7 @@ export default function Admin() {
   if (!isAdmin) {
     return (
       <div className="min-h-screen bg-background">
-        <Header onNavigate={() => {}} activeSection="market" />
+        <Header />
         <div className="flex items-center justify-center py-20">
           <Card className="max-w-md w-full mx-4">
             <CardHeader className="text-center">
@@ -104,7 +104,7 @@ export default function Admin() {
 
   return (
     <div className="min-h-screen bg-background">
-      <Header onNavigate={() => {}} activeSection="market" />
+      <Header />
       <div className="py-8">
         <div className="mx-auto max-w-7xl px-4">
           <div className="flex items-center gap-3 mb-6">

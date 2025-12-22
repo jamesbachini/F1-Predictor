@@ -1,140 +1,298 @@
-import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
-import { StellarWalletsKit, KitEventType } from "@creit-tech/stellar-wallets-kit";
-import { defaultModules } from "@creit-tech/stellar-wallets-kit/modules/utils";
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
+import { Magic } from "magic-sdk";
+import { ethers } from "ethers";
+
+type WalletType = "magic" | "external" | null;
 
 interface WalletContextType {
   walletAddress: string | null;
-  isWalletAvailable: boolean | null;
-  isFreighterInstalled: boolean | null;
+  walletType: WalletType;
   isConnecting: boolean;
-  isKitReady: boolean;
+  isLoading: boolean;
+  userEmail: string | null;
+  provider: ethers.BrowserProvider | null;
+  signer: ethers.Signer | null;
   connectWallet: () => Promise<boolean>;
-  disconnectWallet: () => void;
-  signTransaction: (xdr: string, opts?: { networkPassphrase?: string }) => Promise<{ signedTxXdr: string }>;
-  openWalletModal: () => void;
+  connectWithMagic: (email: string) => Promise<boolean>;
+  connectExternalWallet: () => Promise<boolean>;
+  disconnectWallet: () => Promise<void>;
+  signMessage: (message: string) => Promise<string>;
+  getUsdcBalance: () => Promise<string>;
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
 
-let kitInitialized = false;
+const MAGIC_API_KEY = import.meta.env.VITE_MAGIC_API_KEY || "";
+const POLYGON_RPC = "https://polygon-rpc.com";
+const POLYGON_CHAIN_ID = 137;
+const USDC_CONTRACT_ADDRESS = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359";
+
+const USDC_ABI = [
+  "function balanceOf(address owner) view returns (uint256)",
+  "function decimals() view returns (uint8)",
+];
+
+let magicInstance: Magic | null = null;
+
+function getMagic(): Magic | null {
+  if (!MAGIC_API_KEY) {
+    console.warn("Magic API key not configured");
+    return null;
+  }
+  if (!magicInstance) {
+    magicInstance = new Magic(MAGIC_API_KEY, {
+      network: {
+        rpcUrl: POLYGON_RPC,
+        chainId: POLYGON_CHAIN_ID,
+      },
+    });
+  }
+  return magicInstance;
+}
 
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
-  const [isWalletAvailable, setIsWalletAvailable] = useState<boolean | null>(null);
+  const [walletType, setWalletType] = useState<WalletType>(null);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [isKitReady, setIsKitReady] = useState(false);
-  const unsubscribeRef = useRef<(() => void) | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [provider, setProvider] = useState<ethers.BrowserProvider | null>(null);
+  const [signer, setSigner] = useState<ethers.Signer | null>(null);
 
   useEffect(() => {
-    const initializeKit = async () => {
+    const checkExistingSession = async () => {
       try {
-        if (!kitInitialized) {
-          StellarWalletsKit.init({
-            modules: defaultModules(),
-            network: "TESTNET" as any,
-          });
-          kitInitialized = true;
-        }
-        await new Promise(resolve => setTimeout(resolve, 100));
-        setIsKitReady(true);
+        const savedType = localStorage.getItem("polygon_wallet_type") as WalletType;
+        const savedAddress = localStorage.getItem("polygon_wallet_address");
 
-        const wallets = await StellarWalletsKit.refreshSupportedWallets();
-        const hasAvailable = wallets.some(w => w.isAvailable);
-        setIsWalletAvailable(hasAvailable);
-        
-        const savedAddress = localStorage.getItem("stellar_wallet_address");
-        if (savedAddress) {
-          setWalletAddress(savedAddress);
-        }
-
-        unsubscribeRef.current = StellarWalletsKit.on(KitEventType.STATE_UPDATED, (event) => {
-          if (event.payload.address) {
-            setWalletAddress(event.payload.address);
-            localStorage.setItem("stellar_wallet_address", event.payload.address);
-          } else {
-            setWalletAddress(null);
-            localStorage.removeItem("stellar_wallet_address");
+        if (savedType === "magic" && savedAddress) {
+          const magic = getMagic();
+          if (magic) {
+            const isLoggedIn = await magic.user.isLoggedIn();
+            if (isLoggedIn) {
+              const metadata = await magic.user.getInfo();
+              setWalletAddress(metadata.publicAddress || null);
+              setUserEmail(metadata.email || null);
+              setWalletType("magic");
+              
+              const magicProvider = new ethers.BrowserProvider(magic.rpcProvider as any);
+              setProvider(magicProvider);
+              const magicSigner = await magicProvider.getSigner();
+              setSigner(magicSigner);
+            } else {
+              localStorage.removeItem("polygon_wallet_type");
+              localStorage.removeItem("polygon_wallet_address");
+            }
           }
-        });
-      } catch (e) {
-        console.error("Failed to initialize wallet kit:", e);
-        setIsWalletAvailable(false);
-        setIsKitReady(true);
+        } else if (savedType === "external" && savedAddress && window.ethereum) {
+          const accounts = await window.ethereum.request({ method: "eth_accounts" });
+          if (accounts && accounts.length > 0 && accounts[0].toLowerCase() === savedAddress.toLowerCase()) {
+            setWalletAddress(accounts[0]);
+            setWalletType("external");
+            
+            const externalProvider = new ethers.BrowserProvider(window.ethereum);
+            setProvider(externalProvider);
+            const externalSigner = await externalProvider.getSigner();
+            setSigner(externalSigner);
+          } else {
+            localStorage.removeItem("polygon_wallet_type");
+            localStorage.removeItem("polygon_wallet_address");
+          }
+        }
+      } catch (error) {
+        console.error("Error checking existing session:", error);
+      } finally {
+        setIsLoading(false);
       }
     };
 
-    initializeKit();
-
-    return () => {
-      if (unsubscribeRef.current) {
-        unsubscribeRef.current();
-      }
-    };
+    checkExistingSession();
   }, []);
 
-  const openWalletModal = useCallback(async () => {
-    try {
-      const { address } = await StellarWalletsKit.authModal();
-      if (address) {
-        setWalletAddress(address);
-        localStorage.setItem("stellar_wallet_address", address);
-      }
-    } catch (e) {
-      console.error("Wallet modal error:", e);
+  useEffect(() => {
+    if (window.ethereum) {
+      const handleAccountsChanged = (accounts: string[]) => {
+        if (walletType === "external") {
+          if (accounts.length === 0) {
+            disconnectWallet();
+          } else {
+            setWalletAddress(accounts[0]);
+            localStorage.setItem("polygon_wallet_address", accounts[0]);
+          }
+        }
+      };
+
+      const handleChainChanged = () => {
+        window.location.reload();
+      };
+
+      window.ethereum.on("accountsChanged", handleAccountsChanged);
+      window.ethereum.on("chainChanged", handleChainChanged);
+
+      return () => {
+        window.ethereum?.removeListener?.("accountsChanged", handleAccountsChanged);
+        window.ethereum?.removeListener?.("chainChanged", handleChainChanged);
+      };
     }
-  }, []);
+  }, [walletType]);
 
-  const connectWallet = useCallback(async (): Promise<boolean> => {
+  const connectWithMagic = useCallback(async (email: string): Promise<boolean> => {
     setIsConnecting(true);
     try {
-      const wallets = await StellarWalletsKit.refreshSupportedWallets();
-      const available = wallets.filter(w => w.isAvailable);
-      
-      if (available.length === 0) {
-        return false;
+      const magic = getMagic();
+      if (!magic) {
+        throw new Error("Magic not initialized - API key missing");
       }
 
-      const { address } = await StellarWalletsKit.authModal();
-      if (address) {
-        setWalletAddress(address);
-        localStorage.setItem("stellar_wallet_address", address);
+      await magic.auth.loginWithMagicLink({ email });
+      const metadata = await magic.user.getInfo();
+      
+      if (metadata.publicAddress) {
+        setWalletAddress(metadata.publicAddress);
+        setUserEmail(metadata.email || null);
+        setWalletType("magic");
+        localStorage.setItem("polygon_wallet_type", "magic");
+        localStorage.setItem("polygon_wallet_address", metadata.publicAddress);
+        
+        const magicProvider = new ethers.BrowserProvider(magic.rpcProvider as any);
+        setProvider(magicProvider);
+        const magicSigner = await magicProvider.getSigner();
+        setSigner(magicSigner);
+        
         return true;
       }
       return false;
-    } catch (e) {
-      console.error("Wallet connection error:", e);
+    } catch (error) {
+      console.error("Magic login error:", error);
       return false;
     } finally {
       setIsConnecting(false);
     }
   }, []);
 
-  const disconnectWallet = useCallback(() => {
-    StellarWalletsKit.disconnect();
-    setWalletAddress(null);
-    localStorage.removeItem("stellar_wallet_address");
+  const connectExternalWallet = useCallback(async (): Promise<boolean> => {
+    setIsConnecting(true);
+    try {
+      if (!window.ethereum) {
+        throw new Error("No wallet detected. Please install MetaMask or another Polygon wallet.");
+      }
+
+      const chainIdHex = await window.ethereum.request({ method: "eth_chainId" });
+      const currentChainId = parseInt(chainIdHex, 16);
+
+      if (currentChainId !== POLYGON_CHAIN_ID) {
+        try {
+          await window.ethereum.request({
+            method: "wallet_switchEthereumChain",
+            params: [{ chainId: `0x${POLYGON_CHAIN_ID.toString(16)}` }],
+          });
+        } catch (switchError: any) {
+          if (switchError.code === 4902) {
+            await window.ethereum.request({
+              method: "wallet_addEthereumChain",
+              params: [{
+                chainId: `0x${POLYGON_CHAIN_ID.toString(16)}`,
+                chainName: "Polygon Mainnet",
+                nativeCurrency: { name: "MATIC", symbol: "MATIC", decimals: 18 },
+                rpcUrls: [POLYGON_RPC],
+                blockExplorerUrls: ["https://polygonscan.com/"],
+              }],
+            });
+          } else {
+            throw switchError;
+          }
+        }
+      }
+
+      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+      
+      if (accounts && accounts.length > 0) {
+        const address = accounts[0];
+        setWalletAddress(address);
+        setWalletType("external");
+        setUserEmail(null);
+        localStorage.setItem("polygon_wallet_type", "external");
+        localStorage.setItem("polygon_wallet_address", address);
+        
+        const externalProvider = new ethers.BrowserProvider(window.ethereum);
+        setProvider(externalProvider);
+        const externalSigner = await externalProvider.getSigner();
+        setSigner(externalSigner);
+        
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error("External wallet connection error:", error);
+      return false;
+    } finally {
+      setIsConnecting(false);
+    }
   }, []);
 
-  const signTransaction = useCallback(async (xdr: string, opts?: { networkPassphrase?: string }): Promise<{ signedTxXdr: string }> => {
-    const result = await StellarWalletsKit.signTransaction(xdr, {
-      networkPassphrase: opts?.networkPassphrase,
-      address: walletAddress || undefined,
-    });
-    return { signedTxXdr: result.signedTxXdr };
-  }, [walletAddress]);
+  const disconnectWallet = useCallback(async () => {
+    try {
+      if (walletType === "magic") {
+        const magic = getMagic();
+        if (magic) {
+          await magic.user.logout();
+        }
+      }
+    } catch (error) {
+      console.error("Logout error:", error);
+    }
+    
+    setWalletAddress(null);
+    setWalletType(null);
+    setUserEmail(null);
+    setProvider(null);
+    setSigner(null);
+    localStorage.removeItem("polygon_wallet_type");
+    localStorage.removeItem("polygon_wallet_address");
+  }, [walletType]);
+
+  const signMessage = useCallback(async (message: string): Promise<string> => {
+    if (!signer) {
+      throw new Error("No signer available. Please connect your wallet.");
+    }
+    return await signer.signMessage(message);
+  }, [signer]);
+
+  const getUsdcBalance = useCallback(async (): Promise<string> => {
+    if (!provider || !walletAddress) {
+      return "0";
+    }
+    try {
+      const contract = new ethers.Contract(USDC_CONTRACT_ADDRESS, USDC_ABI, provider);
+      const balance = await contract.balanceOf(walletAddress);
+      const decimals = await contract.decimals();
+      return ethers.formatUnits(balance, decimals);
+    } catch (error) {
+      console.error("Error fetching USDC balance:", error);
+      return "0";
+    }
+  }, [provider, walletAddress]);
+
+  const connectWallet = useCallback(async (): Promise<boolean> => {
+    return await connectExternalWallet();
+  }, [connectExternalWallet]);
 
   return (
     <WalletContext.Provider
       value={{
         walletAddress,
-        isWalletAvailable,
-        isFreighterInstalled: isWalletAvailable,
+        walletType,
         isConnecting,
-        isKitReady,
+        isLoading,
+        userEmail,
+        provider,
+        signer,
         connectWallet,
+        connectWithMagic,
+        connectExternalWallet,
         disconnectWallet,
-        signTransaction,
-        openWalletModal,
+        signMessage,
+        getUsdcBalance,
       }}
     >
       {children}
@@ -148,4 +306,14 @@ export function useWallet() {
     throw new Error("useWallet must be used within a WalletProvider");
   }
   return context;
+}
+
+declare global {
+  interface Window {
+    ethereum?: {
+      request: (args: { method: string; params?: unknown[] }) => Promise<any>;
+      on: (event: string, callback: (...args: any[]) => void) => void;
+      removeListener?: (event: string, callback: (...args: any[]) => void) => void;
+    };
+  }
 }

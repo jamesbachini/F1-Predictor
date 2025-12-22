@@ -16,13 +16,8 @@ import {
 } from "./lmsr";
 import { 
   getUSDCBalance, 
-  buildUSDCPaymentTransaction, 
-  verifySignedTransaction, 
-  submitSignedTransaction,
-  sendUSDCPayment,
-  hasUSDCTrustline,
   getPlatformAddress
-} from "./stellar";
+} from "./polygon";
 import { randomBytes } from "crypto";
 
 // In-memory store for pending pool buy transaction expectations
@@ -237,8 +232,8 @@ export function registerPoolRoutes(app: Express): void {
     }
   });
 
-  // Build unsigned transaction for pool buy
-  app.post("/api/pools/:poolId/build-transaction", async (req, res) => {
+  // Buy shares in a pool (simplified for Polygon - balance verified on-chain)
+  app.post("/api/pools/:poolId/buy", async (req, res) => {
     try {
       const { outcomeId, userId, shares } = req.body;
       
@@ -284,139 +279,43 @@ export function registerPoolRoutes(app: Express): void {
         });
       }
 
-      // Build unsigned transaction
-      const txResult = await buildUSDCPaymentTransaction(
-        user.walletAddress,
-        cost.toFixed(7),
-        `pool:${pool.id.slice(0, 15)}`
-      );
-
-      if (!txResult.success) {
-        return res.status(500).json({ error: txResult.error });
-      }
-
-      // Generate secure nonce
-      const nonce = randomBytes(16).toString("hex");
-      pendingPoolTransactions.set(nonce, {
-        userId,
-        walletAddress: user.walletAddress,
-        collateralAmount: cost,
-        buyDetails: { 
-          poolId: pool.id, 
-          outcomeId, 
-          shares 
-        },
-        createdAt: Date.now(),
-      });
-
-      res.json({
-        nonce,
-        xdr: txResult.xdr,
-        networkPassphrase: txResult.networkPassphrase,
-        collateralAmount: cost,
-        shares,
-        currentPrice: getPrice(currentShares, pool.bParameter, outcomeIndex),
-      });
-    } catch (error: any) {
-      res.status(400).json({ error: error.message || "Failed to build transaction" });
-    }
-  });
-
-  // Submit signed transaction and execute pool buy
-  app.post("/api/pools/submit-signed", async (req, res) => {
-    try {
-      const { signedXdr, nonce } = req.body;
-      
-      if (!signedXdr || !nonce) {
-        return res.status(400).json({ error: "Missing signed transaction or nonce" });
-      }
-
-      const pending = pendingPoolTransactions.get(nonce);
-      if (!pending) {
-        return res.status(400).json({ 
-          error: "Invalid or expired transaction. Please start a new order." 
-        });
-      }
-
-      // Delete immediately (single-use nonce)
-      pendingPoolTransactions.delete(nonce);
-
-      // Check expiration
-      if (Date.now() - pending.createdAt > 5 * 60 * 1000) {
-        return res.status(400).json({ 
-          error: "Transaction expired. Please start a new order." 
-        });
-      }
-
-      // Verify signed transaction
-      const verification = verifySignedTransaction(
-        signedXdr,
-        pending.walletAddress,
-        pending.collateralAmount.toFixed(7)
-      );
-
-      if (!verification.valid) {
-        return res.status(400).json({ 
-          error: `Transaction verification failed: ${verification.error}` 
-        });
-      }
-
-      // Submit to Stellar
-      const submitResult = await submitSignedTransaction(signedXdr);
-      
-      if (!submitResult.success) {
-        return res.status(400).json({ error: submitResult.error });
-      }
-
-      // Execute the pool buy
-      const { poolId, outcomeId, shares } = pending.buyDetails;
-      
-      const pool = await storage.getChampionshipPool(poolId);
-      if (!pool) {
-        return res.status(400).json({ error: "Pool not found" });
-      }
-
-      const outcomes = await storage.getChampionshipOutcomes(pool.id);
-      const outcomeIndex = outcomes.findIndex(o => o.id === outcomeId);
-      const currentShares = outcomes.map(o => o.sharesOutstanding);
       const priceAtTrade = getPrice(currentShares, pool.bParameter, outcomeIndex);
 
       // Update outcome shares
       await storage.updateOutcomeShares(outcomeId, shares);
 
       // Update pool collateral
-      await storage.updatePoolCollateral(poolId, pending.collateralAmount);
+      await storage.updatePoolCollateral(pool.id, cost);
 
       // Record the trade
       const trade = await storage.createPoolTrade({
-        poolId,
+        poolId: pool.id,
         outcomeId,
-        userId: pending.userId,
+        userId,
         sharesAmount: shares,
-        collateralCost: pending.collateralAmount,
+        collateralCost: cost,
         priceAtTrade,
       });
 
       // Update user's position
       await storage.upsertPoolPosition({
-        poolId,
+        poolId: pool.id,
         outcomeId,
-        userId: pending.userId,
+        userId,
         sharesOwned: shares,
-        totalCost: pending.collateralAmount,
+        totalCost: cost,
       });
 
       res.json({
         success: true,
         trade,
-        transactionHash: submitResult.transactionHash,
         shares,
-        cost: pending.collateralAmount,
+        cost,
         priceAtTrade,
         message: "Shares purchased successfully"
       });
     } catch (error: any) {
-      res.status(400).json({ error: error.message || "Failed to submit order" });
+      res.status(400).json({ error: error.message || "Failed to buy shares" });
     }
   });
 
@@ -873,7 +772,7 @@ export function registerPoolRoutes(app: Express): void {
         });
       }
 
-      // Pre-flight check: Verify all recipients have valid wallets and trustlines
+      // Verify all recipients have valid wallets
       const preFlightResults = [];
       for (const payout of pendingPayouts) {
         const user = await storage.getUser(payout.userId);
@@ -888,26 +787,15 @@ export function registerPoolRoutes(app: Express): void {
           continue;
         }
 
-        const hasTrustline = await hasUSDCTrustline(user.walletAddress);
-        if (!hasTrustline) {
-          preFlightResults.push({
-            payoutId: payout.id,
-            userId: payout.userId,
-            valid: false,
-            error: "User wallet does not have USDC trustline"
-          });
-          continue;
-        }
-
         preFlightResults.push({
           payoutId: payout.id,
           userId: payout.userId,
           walletAddress: user.walletAddress,
+          amount: payout.payoutAmount,
           valid: true
         });
       }
 
-      // Report pre-flight failures but continue with valid payouts
       const validPayouts = preFlightResults.filter(p => p.valid);
       const invalidPayouts = preFlightResults.filter(p => !p.valid);
 
@@ -927,37 +815,19 @@ export function registerPoolRoutes(app: Express): void {
       let successCount = 0;
       let failCount = invalidPayouts.length;
 
-      // Process valid payouts
+      // Mark valid payouts as pending for on-chain processing
+      // Polygon payouts will be handled through smart contract or manual process
       for (const validPayout of validPayouts) {
-        const payout = pendingPayouts.find(p => p.id === validPayout.payoutId)!;
-        
-        // Send USDC payment
-        const transferResult = await sendUSDCPayment(
-          validPayout.walletAddress!,
-          payout.payoutAmount.toFixed(7),
-          `payout:${poolId.slice(0, 14)}`
-        );
-
-        if (transferResult.success) {
-          await storage.updatePoolPayoutStatus(payout.id, "sent", transferResult.transactionHash);
-          results.push({
-            payoutId: payout.id,
-            userId: payout.userId,
-            success: true,
-            amount: payout.payoutAmount,
-            transactionHash: transferResult.transactionHash
-          });
-          successCount++;
-        } else {
-          await storage.updatePoolPayoutStatus(payout.id, "failed");
-          results.push({
-            payoutId: payout.id,
-            userId: payout.userId,
-            success: false,
-            error: transferResult.error
-          });
-          failCount++;
-        }
+        await storage.updatePoolPayoutStatus(validPayout.payoutId, "pending");
+        results.push({
+          payoutId: validPayout.payoutId,
+          userId: validPayout.userId,
+          success: true,
+          amount: validPayout.amount,
+          walletAddress: validPayout.walletAddress,
+          message: "Payout marked for processing"
+        });
+        successCount++;
       }
 
       // Add pre-flight failures to results

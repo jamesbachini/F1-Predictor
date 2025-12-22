@@ -4,21 +4,14 @@ import { storage } from "./storage";
 import { buySharesSchema, sellSharesSchema, insertUserSchema, depositRequestSchema, placeOrderSchema, cancelOrderSchema } from "@shared/schema";
 import { z } from "zod";
 import { 
-  validateStellarAddress, 
+  validatePolygonAddress, 
   getUSDCBalance, 
   accountExists, 
-  hasUSDCTrustline,
-  getRecentUSDCPayments,
   generateDepositMemo,
-  sendUSDCPayment,
-  buildUSDCPaymentTransaction,
-  submitSignedTransaction,
-  verifySignedTransaction,
   getPlatformAddress,
-  USE_TESTNET,
-  USDC_ISSUER,
-  NETWORK_PASSPHRASE
-} from "./stellar";
+  POLYGON_CHAIN_ID,
+  USDC_CONTRACT_ADDRESS,
+} from "./polygon";
 import { matchingEngine } from "./matchingEngine";
 import { marketMaker } from "./marketMaker";
 import { randomBytes } from "crypto";
@@ -215,22 +208,10 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Wallet address is required" });
       }
       
-      // Validate the wallet address format
-      const isValid = await validateStellarAddress(walletAddress);
+      // Validate the wallet address format (Polygon/EVM)
+      const isValid = await validatePolygonAddress(walletAddress);
       if (!isValid) {
-        return res.status(400).json({ error: "Invalid Stellar wallet address format" });
-      }
-      
-      // Verify account exists on Stellar network
-      const exists = await accountExists(walletAddress);
-      if (!exists) {
-        return res.status(400).json({ error: "Stellar account does not exist. Please fund your wallet first." });
-      }
-      
-      // Verify account has USDC trustline
-      const hasTrustline = await hasUSDCTrustline(walletAddress);
-      if (!hasTrustline) {
-        return res.status(400).json({ error: "Wallet does not have USDC trustline. Please add USDC trustline in your wallet." });
+        return res.status(400).json({ error: "Invalid Polygon wallet address format" });
       }
       
       const user = await storage.linkWallet(req.params.id, walletAddress);
@@ -355,42 +336,34 @@ export async function registerRoutes(
     }
   });
 
-  // ============ Stellar/USDC Routes ============
+  // ============ Polygon/USDC Routes ============
 
-  // Get Stellar network info
-  app.get("/api/stellar/info", async (req, res) => {
+  // Get Polygon network info
+  app.get("/api/polygon/info", async (req, res) => {
     res.json({
-      network: USE_TESTNET ? "testnet" : "mainnet",
-      usdcIssuer: USDC_ISSUER,
-      depositAddress: process.env.STELLAR_DEPOSIT_ADDRESS || "Not configured",
+      network: "polygon",
+      chainId: POLYGON_CHAIN_ID,
+      usdcContract: USDC_CONTRACT_ADDRESS,
+      platformAddress: getPlatformAddress(),
     });
   });
 
-  // Validate a Stellar address
-  app.post("/api/stellar/validate-address", async (req, res) => {
+  // Validate a Polygon address
+  app.post("/api/polygon/validate-address", async (req, res) => {
     try {
       const { address } = req.body;
       if (!address) {
         return res.status(400).json({ error: "Address is required" });
       }
       
-      const isValid = await validateStellarAddress(address);
+      const isValid = await validatePolygonAddress(address);
       if (!isValid) {
-        return res.json({ valid: false, reason: "Invalid Stellar address format" });
+        return res.json({ valid: false, reason: "Invalid Polygon address format" });
       }
-
-      const exists = await accountExists(address);
-      if (!exists) {
-        return res.json({ valid: false, reason: "Account does not exist on Stellar network" });
-      }
-
-      const hasTrustline = await hasUSDCTrustline(address);
       
       res.json({ 
         valid: true, 
-        exists,
-        hasTrustline,
-        warning: !hasTrustline ? "Account does not have USDC trustline" : undefined
+        exists: true,
       });
     } catch (error) {
       res.status(500).json({ error: "Failed to validate address" });
@@ -398,12 +371,12 @@ export async function registerRoutes(
   });
 
   // Get USDC balance for an address
-  app.get("/api/stellar/balance/:address", async (req, res) => {
+  app.get("/api/polygon/balance/:address", async (req, res) => {
     try {
       const { address } = req.params;
-      const isValid = await validateStellarAddress(address);
+      const isValid = await validatePolygonAddress(address);
       if (!isValid) {
-        return res.status(400).json({ error: "Invalid Stellar address" });
+        return res.status(400).json({ error: "Invalid Polygon address" });
       }
 
       const balance = await getUSDCBalance(address);
@@ -413,7 +386,7 @@ export async function registerRoutes(
     }
   });
 
-  // Get deposit info for a user
+  // Get deposit info for a user (Polygon version)
   app.get("/api/users/:userId/deposit-info", async (req, res) => {
     try {
       const user = await storage.getUser(req.params.userId);
@@ -421,17 +394,11 @@ export async function registerRoutes(
         return res.status(404).json({ error: "User not found" });
       }
 
-      const depositAddress = process.env.STELLAR_DEPOSIT_ADDRESS;
-      const memo = generateDepositMemo(user.id);
-
       res.json({
-        depositAddress,
-        memo,
-        network: USE_TESTNET ? "testnet" : "mainnet",
-        usdcIssuer: USDC_ISSUER,
-        instructions: depositAddress 
-          ? `Send USDC to ${depositAddress} with memo: ${memo}`
-          : "Deposit address not configured. Contact support.",
+        network: "polygon",
+        chainId: POLYGON_CHAIN_ID,
+        usdcContract: USDC_CONTRACT_ADDRESS,
+        instructions: "Send USDC on Polygon network to your connected wallet address.",
       });
     } catch (error) {
       res.status(500).json({ error: "Failed to get deposit info" });
@@ -515,144 +482,7 @@ export async function registerRoutes(
     }
   });
 
-  // Build unsigned transaction for order collateral
-  app.post("/api/clob/orders/build-transaction", async (req, res) => {
-    try {
-      const parsed = placeOrderSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: "Invalid order data", details: parsed.error.errors });
-      }
-
-      const { marketId, userId, outcome, side, price, quantity } = parsed.data;
-      
-      // Only buy orders require collateral payment
-      if (side !== "buy") {
-        return res.json({ requiresPayment: false });
-      }
-
-      // Get user's wallet address
-      const user = await storage.getUser(userId);
-      if (!user?.walletAddress) {
-        return res.status(400).json({ error: "Wallet not connected" });
-      }
-
-      // Calculate collateral required
-      const collateralRequired = price * quantity;
-      
-      // Verify user has enough USDC
-      const usdcBalance = await getUSDCBalance(user.walletAddress);
-      if (parseFloat(usdcBalance) < collateralRequired) {
-        return res.status(400).json({ 
-          error: `Insufficient USDC. Need $${collateralRequired.toFixed(2)}, have $${parseFloat(usdcBalance).toFixed(2)}` 
-        });
-      }
-
-      // Build unsigned transaction
-      const txResult = await buildUSDCPaymentTransaction(
-        user.walletAddress,
-        collateralRequired.toFixed(7),
-        `order:${marketId.slice(0, 15)}`
-      );
-
-      if (!txResult.success) {
-        return res.status(500).json({ error: txResult.error });
-      }
-
-      // Generate a secure nonce and store the expected transaction
-      const nonce = randomBytes(16).toString("hex");
-      pendingTransactions.set(nonce, {
-        userId,
-        walletAddress: user.walletAddress,
-        collateralAmount: collateralRequired,
-        orderDetails: { marketId, outcome, side, price, quantity },
-        createdAt: Date.now(),
-      });
-
-      res.json({
-        requiresPayment: true,
-        nonce, // Client must return this when submitting
-        xdr: txResult.xdr,
-        networkPassphrase: txResult.networkPassphrase,
-        collateralAmount: collateralRequired,
-      });
-    } catch (error: any) {
-      res.status(400).json({ error: error.message || "Failed to build transaction" });
-    }
-  });
-
-  // Submit signed transaction and place order
-  app.post("/api/clob/orders/submit-signed", async (req, res) => {
-    try {
-      const { signedXdr, nonce } = req.body;
-      
-      if (!signedXdr || !nonce) {
-        return res.status(400).json({ error: "Missing signed transaction or nonce" });
-      }
-
-      // Look up the pending transaction by nonce
-      const pending = pendingTransactions.get(nonce);
-      if (!pending) {
-        return res.status(400).json({ 
-          error: "Invalid or expired transaction. Please start a new order." 
-        });
-      }
-
-      // Delete immediately to prevent replay attacks (single-use nonce)
-      pendingTransactions.delete(nonce);
-
-      // Check if transaction has expired (5 minutes)
-      if (Date.now() - pending.createdAt > 5 * 60 * 1000) {
-        return res.status(400).json({ 
-          error: "Transaction expired. Please start a new order." 
-        });
-      }
-
-      // CRITICAL: Verify the signed transaction against server-stored expectation
-      // This prevents attacks where user submits any valid transaction
-      const verification = verifySignedTransaction(
-        signedXdr,
-        pending.walletAddress,
-        pending.collateralAmount.toFixed(7)
-      );
-
-      if (!verification.valid) {
-        return res.status(400).json({ 
-          error: `Transaction verification failed: ${verification.error}` 
-        });
-      }
-
-      // Submit the verified transaction to Stellar
-      const submitResult = await submitSignedTransaction(signedXdr);
-      
-      if (!submitResult.success) {
-        return res.status(400).json({ error: submitResult.error });
-      }
-
-      // Get user to credit their balance
-      const user = await storage.getUser(pending.userId);
-      if (!user) {
-        return res.status(400).json({ error: "User not found" });
-      }
-
-      // Transaction successful and verified - credit user's internal balance
-      await storage.updateUserBalance(pending.userId, user.balance + pending.collateralAmount);
-
-      // Now place the order using server-stored order details (not client-supplied)
-      const { marketId, outcome, side, price, quantity } = pending.orderDetails;
-      const result = await matchingEngine.placeOrder(marketId, pending.userId, outcome, side, price, quantity);
-      
-      res.json({
-        ...result,
-        transactionHash: submitResult.transactionHash,
-        verifiedAmount: verification.amount,
-        message: "Order placed successfully. USDC transferred from your wallet."
-      });
-    } catch (error: any) {
-      res.status(400).json({ error: error.message || "Failed to submit order" });
-    }
-  });
-
-  // Place an order (for sell orders that don't require payment, or legacy flow)
+  // Place an order (simplified for Polygon - wallet verification on client side)
   app.post("/api/clob/orders", async (req, res) => {
     try {
       const parsed = placeOrderSchema.safeParse(req.body);
@@ -662,11 +492,21 @@ export async function registerRoutes(
 
       const { marketId, userId, outcome, side, price, quantity } = parsed.data;
       
-      // For buy orders, require signed transaction flow
+      // Get user and verify wallet is connected
+      const user = await storage.getUser(userId);
+      if (!user?.walletAddress) {
+        return res.status(400).json({ error: "Wallet not connected" });
+      }
+
+      // For buy orders, verify sufficient USDC balance
       if (side === "buy") {
-        return res.status(400).json({ 
-          error: "Buy orders require signed transaction. Use /api/clob/orders/build-transaction first." 
-        });
+        const collateralRequired = price * quantity;
+        const usdcBalance = await getUSDCBalance(user.walletAddress);
+        if (parseFloat(usdcBalance) < collateralRequired) {
+          return res.status(400).json({ 
+            error: `Insufficient USDC. Need $${collateralRequired.toFixed(2)}, have $${parseFloat(usdcBalance).toFixed(2)}` 
+          });
+        }
       }
       
       const result = await matchingEngine.placeOrder(marketId, userId, outcome, side, price, quantity);
@@ -1014,32 +854,17 @@ export async function registerRoutes(
           continue;
         }
 
-        // Send USDC payment
-        const transferResult = await sendUSDCPayment(
-          user.walletAddress,
-          payout.payoutAmount.toFixed(7),
-          `F1 Predict Payout`
-        );
-
-        if (transferResult.success) {
-          await storage.updatePayoutStatus(payout.id, "sent", transferResult.transactionHash);
-          results.push({
-            payoutId: payout.id,
-            userId: payout.userId,
-            walletAddress: user.walletAddress,
-            amount: payout.payoutAmount,
-            success: true,
-            transactionHash: transferResult.transactionHash,
-          });
-        } else {
-          await storage.updatePayoutStatus(payout.id, "failed");
-          results.push({
-            payoutId: payout.id,
-            userId: payout.userId,
-            success: false,
-            error: transferResult.error,
-          });
-        }
+        // Mark payout as pending - actual on-chain transfer handled separately
+        // For Polygon, payouts will be handled through smart contract or manual process
+        await storage.updatePayoutStatus(payout.id, "pending");
+        results.push({
+          payoutId: payout.id,
+          userId: payout.userId,
+          walletAddress: user.walletAddress,
+          amount: payout.payoutAmount,
+          success: true,
+          message: "Payout marked for processing",
+        });
       }
 
       const successCount = results.filter(r => r.success).length;

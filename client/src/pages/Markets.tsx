@@ -43,11 +43,6 @@ interface Driver {
   color: string;
 }
 
-interface USDCBalanceResponse {
-  address: string;
-  balance: string;
-  asset: string;
-}
 
 interface Position {
   id: number;
@@ -80,12 +75,17 @@ export default function Markets() {
     queryKey: ["/api/drivers"],
   });
 
-  const { data: usdcBalance } = useQuery<USDCBalanceResponse>({
-    queryKey: ["/api/stellar/balance", walletAddress],
+  const { data: usdcBalance } = useQuery<string>({
+    queryKey: ["polygon-usdc-balance", walletAddress],
+    queryFn: async () => {
+      if (!walletAddress) return "0";
+      const { getUsdcBalance } = await import("@/context/WalletContext");
+      return getUsdcBalance(walletAddress);
+    },
     enabled: !!walletAddress,
   });
 
-  const walletUsdcBalance = parseFloat(usdcBalance?.balance || "0");
+  const walletUsdcBalance = parseFloat(usdcBalance || "0");
 
   const { data: positions = [] } = useQuery<Position[]>({
     queryKey: ["/api/clob/users", userId, "positions"],

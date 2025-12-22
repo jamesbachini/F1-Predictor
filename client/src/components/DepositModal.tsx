@@ -1,112 +1,138 @@
+import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMarket } from "@/context/MarketContext";
 import { useWallet } from "@/context/WalletContext";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
-import { Copy, ExternalLink, Wallet, AlertCircle, Link2, Loader2, LogOut } from "lucide-react";
-import { SiStellar } from "react-icons/si";
+import { Copy, Wallet, AlertCircle, Loader2, LogOut, Mail, ExternalLink } from "lucide-react";
+import { SiPolygon } from "react-icons/si";
 
 interface DepositModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-interface DepositInfo {
-  depositAddress: string | null;
-  memo: string;
-  network: string;
-  usdcIssuer: string;
-  instructions: string;
-}
-
-interface USDCBalanceResponse {
-  address: string;
-  balance: string;
-  asset: string;
-}
-
 export function DepositModal({ open, onOpenChange }: DepositModalProps) {
   const { userId, resetUser } = useMarket();
-  const { walletAddress, isFreighterInstalled, isConnecting, connectWallet, disconnectWallet } = useWallet();
+  const { 
+    walletAddress, 
+    walletType,
+    isConnecting, 
+    userEmail,
+    connectWithMagic,
+    connectExternalWallet,
+    disconnectWallet,
+    getUsdcBalance,
+  } = useWallet();
   const { toast } = useToast();
-  
-  const { data: depositInfo } = useQuery<DepositInfo>({
-    queryKey: ["/api/users", userId, "deposit-info"],
-    enabled: !!userId && open,
-  });
+  const [email, setEmail] = useState("");
 
-  const { data: usdcBalance, isLoading: isLoadingBalance } = useQuery<USDCBalanceResponse>({
-    queryKey: ["/api/stellar/balance", walletAddress],
+  const { data: usdcBalance, isLoading: isLoadingBalance, refetch: refetchBalance } = useQuery({
+    queryKey: ["polygon-usdc-balance", walletAddress],
+    queryFn: async () => {
+      if (!walletAddress) return "0";
+      return await getUsdcBalance();
+    },
     enabled: !!walletAddress && open,
   });
 
-  const handleDisconnect = () => {
-    disconnectWallet();
+  const handleDisconnect = async () => {
+    await disconnectWallet();
     toast({
       title: "Wallet Disconnected",
-      description: "Your Stellar wallet has been disconnected.",
+      description: "Your Polygon wallet has been disconnected.",
     });
   };
 
-  const handleConnect = async () => {
-    const success = await connectWallet();
+  const handleMagicLogin = async () => {
+    if (!email) {
+      toast({
+        title: "Email Required",
+        description: "Please enter your email address.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const success = await connectWithMagic(email);
     if (success) {
-      // Link wallet to user on the backend
       if (userId) {
         try {
-          const { StellarWalletsKit } = await import("@creit-tech/stellar-wallets-kit");
-          const { address } = await StellarWalletsKit.getAddress();
-          if (address) {
-            const res = await fetch(`/api/users/${userId}/link-wallet`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ walletAddress: address }),
-            });
-            if (!res.ok) {
-              const error = await res.json();
-              // Handle stale user ID - reset user and close modal
-              if (res.status === 404 && error.error === "User not found") {
-                resetUser();
-                onOpenChange(false);
-                toast({
-                  title: "Session Reset",
-                  description: "Your session was reset. Please try connecting again.",
-                });
-                return;
-              }
+          const res = await fetch(`/api/users/${userId}/link-wallet`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ walletAddress }),
+          });
+          if (!res.ok) {
+            const error = await res.json();
+            if (res.status === 404 && error.error === "User not found") {
+              resetUser();
+              onOpenChange(false);
               toast({
-                title: "Wallet Link Failed",
-                description: error.error || "Failed to verify wallet. Please try again.",
-                variant: "destructive",
+                title: "Session Reset",
+                description: "Your session was reset. Please try connecting again.",
               });
               return;
             }
-            toast({
-              title: "Wallet Connected",
-              description: "Your wallet has been verified and linked.",
-            });
           }
         } catch (e) {
           console.error("Failed to link wallet:", e);
-          toast({
-            title: "Wallet Link Error",
-            description: "Failed to verify wallet connection. Please try again.",
-            variant: "destructive",
-          });
-          return;
         }
-      } else {
-        toast({
-          title: "Wallet Connected",
-          description: "Your wallet has been connected.",
-        });
       }
+      toast({
+        title: "Wallet Connected",
+        description: "Your Magic wallet has been connected.",
+      });
+      refetchBalance();
     } else {
       toast({
         title: "Connection Failed",
-        description: "No compatible Stellar wallet found. Please install Freighter, xBull, or another supported wallet.",
+        description: "Failed to connect with Magic. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleExternalWalletConnect = async () => {
+    const success = await connectExternalWallet();
+    if (success) {
+      if (userId) {
+        try {
+          const res = await fetch(`/api/users/${userId}/link-wallet`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ walletAddress }),
+          });
+          if (!res.ok) {
+            const error = await res.json();
+            if (res.status === 404 && error.error === "User not found") {
+              resetUser();
+              onOpenChange(false);
+              toast({
+                title: "Session Reset",
+                description: "Your session was reset. Please try connecting again.",
+              });
+              return;
+            }
+          }
+        } catch (e) {
+          console.error("Failed to link wallet:", e);
+        }
+      }
+      toast({
+        title: "Wallet Connected",
+        description: "Your external wallet has been connected to Polygon.",
+      });
+      refetchBalance();
+    } else {
+      toast({
+        title: "Connection Failed",
+        description: "No compatible wallet found. Please install MetaMask or another Polygon wallet.",
         variant: "destructive",
       });
     }
@@ -126,91 +152,117 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Wallet className="h-5 w-5" />
-            Add Funds
+            Connect Wallet
           </DialogTitle>
           <DialogDescription>
-            Deposit USDC via Stellar network to fund your trading account.
+            Connect your Polygon wallet to trade on prediction markets.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6">
-          <div className="rounded-md bg-muted p-4">
-            <div className="flex items-center justify-between gap-2 mb-3">
-              <div className="flex items-center gap-2">
-                <SiStellar className="h-5 w-5 text-foreground" />
-                <span className="font-medium">Stellar USDC Deposit</span>
-                <Badge variant="outline">
-                  {depositInfo?.network || "testnet"}
-                </Badge>
-              </div>
-              {walletAddress && (
-                <div className="flex items-center gap-2">
-                  <Badge variant="secondary" className="font-mono text-xs">
-                    {walletAddress.slice(0, 4)}...{walletAddress.slice(-4)}
-                  </Badge>
+          {walletAddress ? (
+            <div className="space-y-4">
+              <div className="rounded-md bg-muted p-4">
+                <div className="flex items-center justify-between gap-2 mb-3">
+                  <div className="flex items-center gap-2">
+                    <SiPolygon className="h-5 w-5 text-purple-500" />
+                    <span className="font-medium">Polygon Wallet</span>
+                    <Badge variant="outline">
+                      {walletType === "magic" ? "Magic" : "External"}
+                    </Badge>
+                  </div>
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-6 w-6"
                     onClick={handleDisconnect}
                     data-testid="button-disconnect-wallet"
                   >
-                    <LogOut className="h-3.5 w-3.5" />
+                    <LogOut className="h-4 w-4" />
                   </Button>
                 </div>
-              )}
-            </div>
 
-            {walletAddress && (
-              <div className="mb-4 p-3 rounded-md bg-background border">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm">
-                    <p className="text-muted-foreground">USDC Balance</p>
-                    {isLoadingBalance ? (
-                      <p className="font-bold text-lg">Loading...</p>
-                    ) : (
-                      <p className="font-bold text-lg tabular-nums" data-testid="text-usdc-balance">
-                        {usdcBalance?.balance ? `$${parseFloat(usdcBalance.balance).toFixed(2)}` : "$0.00"}
-                      </p>
-                    )}
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs text-muted-foreground">Connected Address</label>
+                    <div className="flex items-center gap-2 mt-1">
+                      <code className="flex-1 text-xs bg-background rounded px-2 py-1.5 truncate" data-testid="text-wallet-address">
+                        {walletAddress}
+                      </code>
+                      <Button 
+                        size="icon" 
+                        variant="ghost"
+                        onClick={() => copyToClipboard(walletAddress, "Address")}
+                        data-testid="button-copy-address"
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
-                  <SiStellar className="h-8 w-8 text-muted-foreground" />
+
+                  {userEmail && (
+                    <div>
+                      <label className="text-xs text-muted-foreground">Email</label>
+                      <p className="text-sm mt-1">{userEmail}</p>
+                    </div>
+                  )}
+
+                  <div className="p-3 rounded-md bg-background border">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-sm">
+                        <p className="text-muted-foreground">USDC Balance</p>
+                        {isLoadingBalance ? (
+                          <p className="font-bold text-lg">Loading...</p>
+                        ) : (
+                          <p className="font-bold text-lg tabular-nums" data-testid="text-usdc-balance">
+                            ${parseFloat(usdcBalance || "0").toFixed(2)}
+                          </p>
+                        )}
+                      </div>
+                      <SiPolygon className="h-8 w-8 text-purple-500/30" />
+                    </div>
+                  </div>
                 </div>
               </div>
-            )}
 
-            {isFreighterInstalled === false && (
-              <div className="mb-4 p-3 rounded-md bg-background border">
+              <div className="text-sm text-muted-foreground">
                 <div className="flex items-start gap-2">
-                  <AlertCircle className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
-                  <div className="text-sm">
-                    <p className="font-medium">No Stellar Wallet Detected</p>
-                    <p className="text-muted-foreground mt-1">
-                      Install a Stellar wallet extension like Freighter, xBull, or Lobstr to connect.
-                    </p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-2"
-                      onClick={() => window.open("https://freighter.app", "_blank")}
-                      data-testid="button-install-freighter"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5 mr-2" />
-                      Get Freighter
-                    </Button>
-                  </div>
+                  <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                  <span>
+                    To add funds, send USDC on Polygon network to your connected wallet address.
+                  </span>
                 </div>
               </div>
-            )}
+            </div>
+          ) : (
+            <Tabs defaultValue="magic" className="w-full">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="magic" data-testid="tab-magic">
+                  <Mail className="h-4 w-4 mr-2" />
+                  Email
+                </TabsTrigger>
+                <TabsTrigger value="external" data-testid="tab-external">
+                  <Wallet className="h-4 w-4 mr-2" />
+                  Wallet
+                </TabsTrigger>
+              </TabsList>
 
-            {isFreighterInstalled && !walletAddress && (
-              <div className="mb-4">
+              <TabsContent value="magic" className="space-y-4 mt-4">
+                <div className="space-y-2">
+                  <Label htmlFor="email">Email Address</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="you@example.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    data-testid="input-email"
+                  />
+                </div>
                 <Button
-                  onClick={handleConnect}
-                  disabled={isConnecting}
+                  onClick={handleMagicLogin}
+                  disabled={isConnecting || !email}
                   className="w-full"
-                  variant="outline"
-                  data-testid="button-connect-wallet"
+                  data-testid="button-magic-login"
                 >
                   {isConnecting ? (
                     <>
@@ -219,82 +271,59 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
                     </>
                   ) : (
                     <>
-                      <Link2 className="h-4 w-4 mr-2" />
-                      Connect Stellar Wallet
+                      <Mail className="h-4 w-4 mr-2" />
+                      Continue with Email
                     </>
                   )}
                 </Button>
-              </div>
-            )}
-            
-            {depositInfo?.depositAddress ? (
-              <div className="space-y-3">
-                <div>
-                  <label className="text-xs text-muted-foreground">Deposit Address</label>
-                  <div className="flex items-center gap-2 mt-1">
-                    <code className="flex-1 text-xs bg-background rounded px-2 py-1.5 truncate" data-testid="text-deposit-address">
-                      {depositInfo.depositAddress}
-                    </code>
-                    <Button 
-                      size="icon" 
-                      variant="ghost"
-                      onClick={() => copyToClipboard(depositInfo.depositAddress!, "Address")}
-                      data-testid="button-copy-address"
-                    >
-                      <Copy className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
+                <p className="text-xs text-muted-foreground text-center">
+                  A secure wallet will be created for your email address using Magic.
+                </p>
+              </TabsContent>
 
-                <div>
-                  <label className="text-xs text-muted-foreground">Your Memo (Required)</label>
-                  <div className="flex items-center gap-2 mt-1">
-                    <code className="flex-1 text-xs bg-background rounded px-2 py-1.5 font-mono" data-testid="text-memo">
-                      {depositInfo.memo}
-                    </code>
-                    <Button 
-                      size="icon" 
-                      variant="ghost"
-                      onClick={() => copyToClipboard(depositInfo.memo, "Memo")}
-                      data-testid="button-copy-memo"
-                    >
-                      <Copy className="h-4 w-4" />
-                    </Button>
+              <TabsContent value="external" className="space-y-4 mt-4">
+                <div className="rounded-md bg-muted p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <SiPolygon className="h-5 w-5 text-purple-500" />
+                    <span className="font-medium">Connect External Wallet</span>
                   </div>
+                  <p className="text-sm text-muted-foreground">
+                    Connect MetaMask, Rainbow, or any Polygon-compatible wallet.
+                  </p>
                 </div>
-
-                <div className="flex items-start gap-2 text-xs text-muted-foreground mt-2">
-                  <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                  <span>Always include the memo when sending USDC. Deposits without the correct memo may be lost.</span>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div className="text-sm text-muted-foreground">
-                  If you have XLM testnet tokens, you may add USDC as an asset in your wallet and perform a swap to get USDC tokens.
-                </div>
-                <a 
-                  href="/#how-it-works" 
-                  className="text-sm text-primary hover:underline inline-flex items-center gap-1"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    onOpenChange(false);
-                    window.location.href = "/#how-it-works";
-                    setTimeout(() => {
-                      const element = document.getElementById("how-it-works");
-                      if (element) {
-                        element.scrollIntoView({ behavior: "smooth" });
-                      }
-                    }, 100);
-                  }}
-                  data-testid="link-how-it-works"
+                <Button
+                  onClick={handleExternalWalletConnect}
+                  disabled={isConnecting}
+                  className="w-full"
+                  variant="outline"
+                  data-testid="button-connect-external"
                 >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                  How it works
-                </a>
-              </div>
-            )}
-          </div>
+                  {isConnecting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Connecting...
+                    </>
+                  ) : (
+                    <>
+                      <Wallet className="h-4 w-4 mr-2" />
+                      Connect Wallet
+                    </>
+                  )}
+                </Button>
+                <div className="flex justify-center gap-4 text-xs text-muted-foreground">
+                  <a 
+                    href="https://metamask.io" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="hover:text-foreground inline-flex items-center gap-1"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    Get MetaMask
+                  </a>
+                </div>
+              </TabsContent>
+            </Tabs>
+          )}
         </div>
       </DialogContent>
     </Dialog>

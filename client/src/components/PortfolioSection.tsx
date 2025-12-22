@@ -11,11 +11,6 @@ import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
-interface USDCBalanceResponse {
-  address: string;
-  balance: string;
-  asset: string;
-}
 
 interface PoolPosition {
   id: string;
@@ -76,8 +71,13 @@ export function PortfolioSection() {
   const [sellSharesInput, setSellSharesInput] = useState("1");
   const [isSelling, setIsSelling] = useState(false);
 
-  const { data: usdcBalance, isLoading: isLoadingBalance } = useQuery<USDCBalanceResponse>({
-    queryKey: ["/api/stellar/balance", walletAddress],
+  const { data: usdcBalance, isLoading: isLoadingBalance } = useQuery<string>({
+    queryKey: ["polygon-usdc-balance", walletAddress],
+    queryFn: async () => {
+      if (!walletAddress) return "0";
+      const { getUsdcBalance } = await import("@/context/WalletContext");
+      return getUsdcBalance(walletAddress);
+    },
     enabled: !!walletAddress,
   });
 
@@ -99,7 +99,7 @@ export function PortfolioSection() {
     queryKey: ["/api/pools/type/driver"],
   });
 
-  const cashBalance = parseFloat(usdcBalance?.balance || "0");
+  const cashBalance = parseFloat(usdcBalance || "0");
 
   const getOutcomeName = (position: PoolPosition): string => {
     return position.participantName || "Unknown";

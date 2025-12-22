@@ -8,7 +8,6 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import { Loader2, Wallet, Minus, Plus, AlertCircle, TrendingUp } from "lucide-react";
 import { useWallet } from "@/context/WalletContext";
-import { StellarWalletsKit } from "@creit-tech/stellar-wallets-kit";
 
 interface PoolOutcome {
   id: string;
@@ -50,12 +49,6 @@ interface QuoteResponse {
   priceImpact: number;
 }
 
-interface USDCBalanceResponse {
-  address: string;
-  balance: string;
-  asset: string;
-}
-
 export function PoolBuyModal({
   open,
   onClose,
@@ -66,11 +59,11 @@ export function PoolBuyModal({
   userId,
 }: PoolBuyModalProps) {
   const { toast } = useToast();
-  const { walletAddress } = useWallet();
+  const { walletAddress, getUsdcBalance } = useWallet();
   
   const [shares, setShares] = useState(10);
   const [sharesInput, setSharesInput] = useState("10");
-  const [isSigningTransaction, setIsSigningTransaction] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const outcome = pool?.outcomes?.find(o => o.participantId === participantId);
   
@@ -98,8 +91,12 @@ export function PoolBuyModal({
     setSharesInput(validValue.toString());
   };
 
-  const { data: usdcBalance } = useQuery<USDCBalanceResponse>({
-    queryKey: ["/api/stellar/balance", walletAddress],
+  const { data: usdcBalance } = useQuery({
+    queryKey: ["polygon-usdc-balance", walletAddress],
+    queryFn: async () => {
+      if (!walletAddress) return "0";
+      return await getUsdcBalance();
+    },
     enabled: !!walletAddress && open,
   });
 
@@ -115,13 +112,11 @@ export function PoolBuyModal({
     refetchInterval: 10000,
   });
 
-  const walletUsdcBalance = usdcBalance?.balance ? parseFloat(usdcBalance.balance) : 0;
+  const walletUsdcBalance = usdcBalance ? parseFloat(usdcBalance) : 0;
   const currentPrice = outcome?.price || 0;
   const totalCost = quote?.cost || (currentPrice * shares);
   const canAfford = totalCost <= walletUsdcBalance;
   const canBuy = canAfford && shares > 0 && !!walletAddress && !!pool && !!outcome;
-
-  const maxShares = currentPrice > 0 ? Math.floor(walletUsdcBalance / currentPrice) : 0;
 
   const invalidateQueries = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/pools/type/team"] });
@@ -129,17 +124,17 @@ export function PoolBuyModal({
     queryClient.invalidateQueries({ queryKey: ["/api/pools/positions", userId] });
     queryClient.invalidateQueries({ queryKey: ["/api/pools/trades", userId] });
     queryClient.invalidateQueries({ queryKey: ["/api/users", userId] });
-    queryClient.invalidateQueries({ queryKey: ["/api/stellar/balance", walletAddress] });
+    queryClient.invalidateQueries({ queryKey: ["polygon-usdc-balance", walletAddress] });
     queryClient.invalidateQueries({ queryKey: ["/api/pools", pool?.id] });
   };
 
   const handleBuy = async () => {
     if (!pool || !outcome || !walletAddress) return;
     
-    setIsSigningTransaction(true);
+    setIsSubmitting(true);
     
     try {
-      const buildResponse = await fetch(`/api/pools/${pool.id}/build-transaction`, {
+      const response = await fetch(`/api/pools/${pool.id}/buy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -149,52 +144,15 @@ export function PoolBuyModal({
         }),
       });
       
-      const buildResult = await buildResponse.json();
+      const result = await response.json();
       
-      if (!buildResponse.ok) {
-        throw new Error(buildResult.error || "Failed to build transaction");
-      }
-      
-      toast({
-        title: "Sign Transaction",
-        description: `Please sign the transaction for $${buildResult.collateralAmount.toFixed(2)} USDC`,
-      });
-      
-      let signResult;
-      try {
-        signResult = await StellarWalletsKit.signTransaction(buildResult.xdr, {
-          networkPassphrase: buildResult.networkPassphrase,
-          address: walletAddress,
-        });
-      } catch (signError: any) {
-        if (signError?.message?.includes("User declined") || signError?.message?.includes("cancelled")) {
-          throw new Error("Transaction was declined. Please try again and approve the transaction in your wallet.");
-        }
-        throw new Error(`Wallet signing error: ${signError?.message || "Unknown error"}`);
-      }
-      
-      if (!signResult.signedTxXdr) {
-        throw new Error("Transaction signing was cancelled or failed. Please try again.");
-      }
-      
-      const submitResponse = await fetch("/api/pools/submit-signed", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          signedXdr: signResult.signedTxXdr,
-          nonce: buildResult.nonce,
-        }),
-      });
-      
-      const submitResult = await submitResponse.json();
-      
-      if (!submitResponse.ok) {
-        throw new Error(submitResult.error || "Failed to submit order");
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to complete purchase");
       }
       
       toast({
         title: "Purchase Successful",
-        description: `Bought ${shares} shares of ${participantName} for $${submitResult.cost.toFixed(2)}`,
+        description: `Bought ${shares} shares of ${participantName} for $${result.cost.toFixed(2)}`,
       });
       
       invalidateQueries();
@@ -210,7 +168,7 @@ export function PoolBuyModal({
         variant: "destructive",
       });
     } finally {
-      setIsSigningTransaction(false);
+      setIsSubmitting(false);
     }
   };
 
@@ -322,25 +280,29 @@ export function PoolBuyModal({
             </div>
             {quote && (
               <div className="text-sm text-muted-foreground space-y-1">
-                <div className="flex justify-between gap-2">
-                  <span>Average Price</span>
-                  <span className="tabular-nums">${quote.averagePrice.toFixed(4)}</span>
+                <div className="flex justify-between">
+                  <span>Avg. Price per Share</span>
+                  <span>${quote.averagePrice.toFixed(4)}</span>
                 </div>
-                <div className="flex justify-between gap-2">
-                  <span>Price Impact</span>
-                  <span className={`tabular-nums ${quote.priceImpact > 0 ? "text-amber-600" : ""}`}>
-                    +{(quote.priceImpact * 100).toFixed(2)}%
-                  </span>
+                <div className="flex justify-between">
+                  <span>Price After Trade</span>
+                  <span>${quote.newPrice.toFixed(4)}</span>
                 </div>
+                {quote.priceImpact > 1 && (
+                  <div className="flex justify-between text-amber-600">
+                    <span>Price Impact</span>
+                    <span>{quote.priceImpact.toFixed(1)}%</span>
+                  </div>
+                )}
               </div>
             )}
-            <div className="pt-2 border-t flex items-center justify-between text-sm">
-              <span className="text-muted-foreground flex items-center gap-1">
+            <div className="flex items-center justify-between text-sm text-muted-foreground pt-2 border-t">
+              <span className="flex items-center gap-1">
                 <Wallet className="h-3.5 w-3.5" />
-                Wallet Balance
+                USDC Balance
               </span>
               <span className="tabular-nums" data-testid="text-modal-balance">
-                ${walletUsdcBalance.toFixed(2)} USDC
+                ${walletUsdcBalance.toFixed(2)}
               </span>
             </div>
           </div>
@@ -355,40 +317,33 @@ export function PoolBuyModal({
           {!walletAddress && (
             <div className="flex items-center gap-2 rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-600 dark:text-amber-400">
               <Wallet className="h-4 w-4 shrink-0" />
-              <span>Please connect your Stellar wallet to purchase shares.</span>
+              <span>Please connect your wallet to purchase shares.</span>
             </div>
           )}
-
-          <div className="bg-blue-500/10 rounded-lg p-3 text-sm text-blue-700 dark:text-blue-300">
-            <p>You will be asked to sign a Stellar transaction to transfer ${totalCost.toFixed(2)} USDC. If {participantName} wins, each share pays out $1.</p>
-          </div>
         </div>
 
-        <DialogFooter className="flex-col gap-2 sm:flex-row">
+        <DialogFooter className="gap-2 sm:gap-0">
           <Button variant="outline" onClick={handleClose} data-testid="button-cancel-purchase">
             Cancel
           </Button>
-          <Button
-            onClick={handleBuy}
-            disabled={!canBuy || isSigningTransaction}
+          <Button 
+            onClick={handleBuy} 
+            disabled={!canBuy || isSubmitting} 
             data-testid="button-confirm-purchase"
           >
-            {isSigningTransaction ? (
+            {isSubmitting ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin mr-1" />
-                Signing...
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                Processing...
               </>
             ) : (
-              <>
-                <Wallet className="w-4 h-4 mr-1" />
-                Buy {shares} Shares
-              </>
+              `Buy ${shares} Share${shares > 1 ? "s" : ""}`
             )}
           </Button>
         </DialogFooter>
 
         <p className="text-center text-xs text-muted-foreground">
-          Shares will be worth $1 each if {participantName} wins the championship.
+          Shares will be worth $1 each if this {pool.type} wins the championship.
         </p>
       </DialogContent>
     </Dialog>

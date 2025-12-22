@@ -13,20 +13,19 @@ import {
 } from "@/components/ui/sheet";
 import { DepositModal } from "./DepositModal";
 
-interface USDCBalanceResponse {
-  address: string;
-  balance: string;
-  asset: string;
-}
-
 export function Header() {
-  const { walletAddress } = useWallet();
+  const { walletAddress, getUsdcBalance } = useWallet();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [depositOpen, setDepositOpen] = useState(false);
 
-  const { data: usdcBalance, isLoading: isLoadingBalance } = useQuery<USDCBalanceResponse>({
-    queryKey: ["/api/stellar/balance", walletAddress],
+  const { data: usdcBalance, isLoading: isLoadingBalance } = useQuery({
+    queryKey: ["polygon-usdc-balance", walletAddress],
+    queryFn: async () => {
+      if (!walletAddress) return "0";
+      return await getUsdcBalance();
+    },
     enabled: !!walletAddress,
+    refetchInterval: 30000,
   });
 
   const [location] = useLocation();
@@ -66,7 +65,7 @@ export function Header() {
                   <Wallet className="h-3.5 w-3.5" />
                   <span className="text-xs text-muted-foreground">USDC:</span>
                   <span className="font-semibold tabular-nums" data-testid="text-usdc-balance">
-                    ${parseFloat(usdcBalance?.balance || "0").toFixed(2)}
+                    ${parseFloat(usdcBalance || "0").toFixed(2)}
                   </span>
                 </>
               )}
