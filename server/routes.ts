@@ -603,6 +603,34 @@ export async function registerRoutes(
     }
   });
 
+  // Get price history for a token from Polymarket CLOB
+  app.get("/api/polymarket/price-history/:tokenId", async (req, res) => {
+    try {
+      const { tokenId } = req.params;
+      const { interval = "all", fidelity = "60" } = req.query;
+      
+      const response = await fetch(
+        `https://clob.polymarket.com/prices-history?market=${tokenId}&interval=${interval}&fidelity=${fidelity}`,
+        {
+          headers: {
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0",
+          },
+        }
+      );
+      
+      if (!response.ok) {
+        return res.status(response.status).json({ error: "Failed to fetch price history" });
+      }
+      
+      const data = await response.json();
+      res.json(data);
+    } catch (error) {
+      console.error("Failed to fetch price history:", error);
+      res.status(500).json({ error: "Failed to fetch price history" });
+    }
+  });
+
   // Get event details by slug
   app.get("/api/polymarket/event/:slug", async (req, res) => {
     try {
