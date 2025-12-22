@@ -107,7 +107,7 @@ The app uses a dual-wallet system:
 ### Secure Buy Order Flow (Nonce-Based Verification)
 @deprecated - This flow is for the legacy CLOB system. The active pool system uses demo credits for trading.
 
-Buy orders require USDC payment via signed Stellar transactions with server-side verification:
+Buy orders require USDC payment via signed Polygon transactions with server-side verification:
 
 1. **Build Transaction** (`POST /api/clob/orders/build-transaction`)
    - Client sends order parameters (marketId, price, quantity, etc.)
@@ -115,15 +115,15 @@ Buy orders require USDC payment via signed Stellar transactions with server-side
    - Server generates secure 16-byte nonce and stores {userId, walletAddress, collateralAmount, orderDetails}
    - Server builds unsigned USDC payment transaction and returns with nonce
 
-2. **Sign Transaction** (Client-side with Freighter)
-   - User signs the unsigned transaction in Freighter wallet
-   - Returns signed XDR
+2. **Sign Transaction** (Client-side with Magic Labs or external wallet)
+   - User signs the unsigned transaction in their connected wallet
+   - Returns signed transaction
 
 3. **Submit Signed Transaction** (`POST /api/clob/orders/submit-signed`)
    - Client sends {signedXdr, nonce} - NO orderDetails accepted
    - Server looks up stored expectation by nonce, deletes immediately (single-use)
    - Server verifies: source=stored wallet, destination=platform, asset=USDC, amount=stored collateral
-   - If verification passes, submits to Stellar network
+   - If verification passes, submits to Polygon network
    - Credits user internal balance with stored collateralAmount
    - Places order using stored orderDetails (not client-supplied)
 
