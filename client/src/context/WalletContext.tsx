@@ -340,10 +340,25 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       console.log("Provider isPhantom:", ethProvider.isPhantom);
       console.log("Provider isMetaMask:", ethProvider.isMetaMask);
 
+      // IMPORTANT: Request accounts FIRST to get user authorization
+      // Some wallets (like Phantom) require authorization before any other RPC calls
+      console.log("Requesting account authorization...");
+      const accounts = await ethProvider.request({ method: "eth_requestAccounts" });
+      
+      if (!accounts || accounts.length === 0) {
+        throw new Error("No accounts returned. User may have rejected the connection request.");
+      }
+      
+      const address = accounts[0];
+      console.log("Account authorized:", address);
+
+      // Now check and switch chain AFTER getting authorization
       const chainIdHex = await ethProvider.request({ method: "eth_chainId" });
       const currentChainId = parseInt(chainIdHex, 16);
+      console.log("Current chain ID:", currentChainId, "Target:", POLYGON_CHAIN_ID);
 
       if (currentChainId !== POLYGON_CHAIN_ID) {
+        console.log("Switching to Polygon network...");
         try {
           await ethProvider.request({
             method: "wallet_switchEthereumChain",
@@ -351,6 +366,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           });
         } catch (switchError: any) {
           if (switchError.code === 4902) {
+            console.log("Adding Polygon network...");
             await ethProvider.request({
               method: "wallet_addEthereumChain",
               params: [{
@@ -367,24 +383,20 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      const accounts = await ethProvider.request({ method: "eth_requestAccounts" });
+      // Set up wallet state
+      setWalletAddress(address);
+      setWalletType("external");
+      setUserEmail(null);
+      localStorage.setItem("polygon_wallet_type", "external");
+      localStorage.setItem("polygon_wallet_address", address);
       
-      if (accounts && accounts.length > 0) {
-        const address = accounts[0];
-        setWalletAddress(address);
-        setWalletType("external");
-        setUserEmail(null);
-        localStorage.setItem("polygon_wallet_type", "external");
-        localStorage.setItem("polygon_wallet_address", address);
-        
-        const externalProvider = new ethers.BrowserProvider(ethProvider);
-        setProvider(externalProvider);
-        const externalSigner = await externalProvider.getSigner();
-        setSigner(externalSigner);
-        
-        return true;
-      }
-      return false;
+      const externalProvider = new ethers.BrowserProvider(ethProvider);
+      setProvider(externalProvider);
+      const externalSigner = await externalProvider.getSigner();
+      setSigner(externalSigner);
+      
+      console.log("Wallet connected successfully!");
+      return true;
     } catch (error: any) {
       console.error("External wallet connection error:", error);
       // Re-throw so caller can display specific error message
