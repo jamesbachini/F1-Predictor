@@ -204,8 +204,19 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const connectExternalWallet = useCallback(async (): Promise<boolean> => {
     setIsConnecting(true);
     try {
+      // Debug logging for provider detection
+      console.log("Detecting Ethereum provider...");
+      console.log("window.phantom:", typeof window.phantom, window.phantom);
+      console.log("window.phantom?.ethereum:", window.phantom?.ethereum);
+      console.log("window.ethereum:", window.ethereum);
+      
       const ethProvider = getEthereumProvider();
+      console.log("Selected provider:", ethProvider);
+      console.log("Provider isPhantom:", ethProvider?.isPhantom);
+      console.log("Provider isMetaMask:", ethProvider?.isMetaMask);
+      
       if (!ethProvider) {
+        console.error("No Ethereum provider detected");
         throw new Error("No wallet detected. Please install MetaMask, Phantom, or another Polygon-compatible wallet.");
       }
 
