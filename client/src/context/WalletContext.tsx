@@ -32,6 +32,33 @@ const USDC_ABI = [
   "function decimals() view returns (uint8)",
 ];
 
+interface EthereumProvider {
+  request: (args: { method: string; params?: unknown[] }) => Promise<any>;
+  on: (event: string, callback: (...args: any[]) => void) => void;
+  removeListener?: (event: string, callback: (...args: any[]) => void) => void;
+  isPhantom?: boolean;
+  isMetaMask?: boolean;
+}
+
+declare global {
+  interface Window {
+    ethereum?: EthereumProvider;
+    phantom?: {
+      ethereum?: EthereumProvider;
+    };
+  }
+}
+
+function getEthereumProvider(): EthereumProvider | null {
+  if (window.phantom?.ethereum) {
+    return window.phantom.ethereum;
+  }
+  if (window.ethereum) {
+    return window.ethereum;
+  }
+  return null;
+}
+
 let magicInstance: Magic | null = null;
 
 function getMagic(): Magic | null {
@@ -84,19 +111,22 @@ export function WalletProvider({ children }: { children: ReactNode }) {
               localStorage.removeItem("polygon_wallet_address");
             }
           }
-        } else if (savedType === "external" && savedAddress && window.ethereum) {
-          const accounts = await window.ethereum.request({ method: "eth_accounts" });
-          if (accounts && accounts.length > 0 && accounts[0].toLowerCase() === savedAddress.toLowerCase()) {
-            setWalletAddress(accounts[0]);
-            setWalletType("external");
-            
-            const externalProvider = new ethers.BrowserProvider(window.ethereum);
-            setProvider(externalProvider);
-            const externalSigner = await externalProvider.getSigner();
-            setSigner(externalSigner);
-          } else {
-            localStorage.removeItem("polygon_wallet_type");
-            localStorage.removeItem("polygon_wallet_address");
+        } else if (savedType === "external" && savedAddress) {
+          const ethProvider = getEthereumProvider();
+          if (ethProvider) {
+            const accounts = await ethProvider.request({ method: "eth_accounts" });
+            if (accounts && accounts.length > 0 && accounts[0].toLowerCase() === savedAddress.toLowerCase()) {
+              setWalletAddress(accounts[0]);
+              setWalletType("external");
+              
+              const externalProvider = new ethers.BrowserProvider(ethProvider);
+              setProvider(externalProvider);
+              const externalSigner = await externalProvider.getSigner();
+              setSigner(externalSigner);
+            } else {
+              localStorage.removeItem("polygon_wallet_type");
+              localStorage.removeItem("polygon_wallet_address");
+            }
           }
         }
       } catch (error) {
@@ -110,7 +140,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (window.ethereum) {
+    const ethProvider = getEthereumProvider();
+    if (ethProvider) {
       const handleAccountsChanged = (accounts: string[]) => {
         if (walletType === "external") {
           if (accounts.length === 0) {
@@ -126,12 +157,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         window.location.reload();
       };
 
-      window.ethereum.on("accountsChanged", handleAccountsChanged);
-      window.ethereum.on("chainChanged", handleChainChanged);
+      ethProvider.on("accountsChanged", handleAccountsChanged);
+      ethProvider.on("chainChanged", handleChainChanged);
 
       return () => {
-        window.ethereum?.removeListener?.("accountsChanged", handleAccountsChanged);
-        window.ethereum?.removeListener?.("chainChanged", handleChainChanged);
+        ethProvider.removeListener?.("accountsChanged", handleAccountsChanged);
+        ethProvider.removeListener?.("chainChanged", handleChainChanged);
       };
     }
   }, [walletType]);
@@ -173,22 +204,23 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const connectExternalWallet = useCallback(async (): Promise<boolean> => {
     setIsConnecting(true);
     try {
-      if (!window.ethereum) {
-        throw new Error("No wallet detected. Please install MetaMask or another Polygon wallet.");
+      const ethProvider = getEthereumProvider();
+      if (!ethProvider) {
+        throw new Error("No wallet detected. Please install MetaMask, Phantom, or another Polygon-compatible wallet.");
       }
 
-      const chainIdHex = await window.ethereum.request({ method: "eth_chainId" });
+      const chainIdHex = await ethProvider.request({ method: "eth_chainId" });
       const currentChainId = parseInt(chainIdHex, 16);
 
       if (currentChainId !== POLYGON_CHAIN_ID) {
         try {
-          await window.ethereum.request({
+          await ethProvider.request({
             method: "wallet_switchEthereumChain",
             params: [{ chainId: `0x${POLYGON_CHAIN_ID.toString(16)}` }],
           });
         } catch (switchError: any) {
           if (switchError.code === 4902) {
-            await window.ethereum.request({
+            await ethProvider.request({
               method: "wallet_addEthereumChain",
               params: [{
                 chainId: `0x${POLYGON_CHAIN_ID.toString(16)}`,
@@ -204,7 +236,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+      const accounts = await ethProvider.request({ method: "eth_requestAccounts" });
       
       if (accounts && accounts.length > 0) {
         const address = accounts[0];
@@ -214,7 +246,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         localStorage.setItem("polygon_wallet_type", "external");
         localStorage.setItem("polygon_wallet_address", address);
         
-        const externalProvider = new ethers.BrowserProvider(window.ethereum);
+        const externalProvider = new ethers.BrowserProvider(ethProvider);
         setProvider(externalProvider);
         const externalSigner = await externalProvider.getSigner();
         setSigner(externalSigner);
@@ -222,7 +254,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         return true;
       }
       return false;
-    } catch (error) {
+    } catch (error: any) {
       console.error("External wallet connection error:", error);
       return false;
     } finally {
@@ -306,14 +338,4 @@ export function useWallet() {
     throw new Error("useWallet must be used within a WalletProvider");
   }
   return context;
-}
-
-declare global {
-  interface Window {
-    ethereum?: {
-      request: (args: { method: string; params?: unknown[] }) => Promise<any>;
-      on: (event: string, callback: (...args: any[]) => void) => void;
-      removeListener?: (event: string, callback: (...args: any[]) => void) => void;
-    };
-  }
 }
