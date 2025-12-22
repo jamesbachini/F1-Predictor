@@ -34,10 +34,6 @@ export function MarketStats() {
   const driversVolume = drivers.reduce((acc, o) => acc + parseFloat(o.volume || "0"), 0);
   const totalVolume = constructorsVolume + driversVolume;
 
-  const constructorsCount = constructors.length;
-  const driversCount = drivers.length;
-  const totalOutcomes = constructorsCount + driversCount;
-
   const seasonStart = new Date("2026-03-15");
   const now = new Date();
   const daysUntil = Math.max(0, Math.ceil((seasonStart.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
@@ -49,6 +45,15 @@ export function MarketStats() {
       return `$${(vol / 1000).toFixed(1)}K`;
     }
     return `$${vol.toFixed(0)}`;
+  };
+
+  const formatShares = (vol: number) => {
+    if (vol >= 1000000) {
+      return `${(vol / 1000000).toFixed(2)}M`;
+    } else if (vol >= 1000) {
+      return `${(vol / 1000).toFixed(1)}K`;
+    }
+    return vol.toLocaleString();
   };
 
   return (
@@ -91,17 +96,17 @@ export function MarketStats() {
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold tabular-nums" data-testid="text-stats-total-shares">
-                {totalOutcomes}
+                {formatShares(totalVolume)}
               </div>
               <p className="text-xs text-muted-foreground">
-                Tradeable outcomes
+                Shares traded across markets
               </p>
               <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1">
-                  <Car className="h-3 w-3" /> Teams: {constructorsCount}
+                  <Car className="h-3 w-3" /> Teams: {formatShares(constructorsVolume)}
                 </span>
                 <span className="flex items-center gap-1">
-                  <User className="h-3 w-3" /> Drivers: {driversCount}
+                  <User className="h-3 w-3" /> Drivers: {formatShares(driversVolume)}
                 </span>
               </div>
             </CardContent>
