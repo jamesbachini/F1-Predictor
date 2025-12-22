@@ -415,6 +415,124 @@ export async function registerRoutes(
     }
   });
 
+  // ============ Polymarket API Routes (Read-Only) ============
+  
+  // Get active F1 markets from Polymarket
+  app.get("/api/polymarket/f1-markets", async (req, res) => {
+    try {
+      const { fetchF1Markets } = await import("./polymarket");
+      const markets = await fetchF1Markets();
+      res.json(markets);
+    } catch (error) {
+      console.error("Failed to fetch Polymarket F1 markets:", error);
+      res.status(500).json({ error: "Failed to fetch F1 markets from Polymarket" });
+    }
+  });
+
+  // Get all F1 markets (including closed) from Polymarket
+  app.get("/api/polymarket/f1-markets/all", async (req, res) => {
+    try {
+      const { fetchAllF1Markets } = await import("./polymarket");
+      const markets = await fetchAllF1Markets();
+      res.json(markets);
+    } catch (error) {
+      console.error("Failed to fetch all Polymarket F1 markets:", error);
+      res.status(500).json({ error: "Failed to fetch F1 markets from Polymarket" });
+    }
+  });
+
+  // Get F1 events from Polymarket
+  app.get("/api/polymarket/f1-events", async (req, res) => {
+    try {
+      const { fetchF1Events } = await import("./polymarket");
+      const events = await fetchF1Events();
+      res.json(events);
+    } catch (error) {
+      console.error("Failed to fetch Polymarket F1 events:", error);
+      res.status(500).json({ error: "Failed to fetch F1 events from Polymarket" });
+    }
+  });
+
+  // Get a specific market by slug
+  app.get("/api/polymarket/market/:slug", async (req, res) => {
+    try {
+      const { getMarketBySlug } = await import("./polymarket");
+      const market = await getMarketBySlug(req.params.slug);
+      if (!market) {
+        return res.status(404).json({ error: "Market not found" });
+      }
+      res.json(market);
+    } catch (error) {
+      console.error("Failed to fetch Polymarket market:", error);
+      res.status(500).json({ error: "Failed to fetch market from Polymarket" });
+    }
+  });
+
+  // Get order book for a token
+  app.get("/api/polymarket/orderbook/:tokenId", async (req, res) => {
+    try {
+      const { getOrderBook } = await import("./polymarket");
+      const orderBook = await getOrderBook(req.params.tokenId);
+      if (!orderBook) {
+        return res.status(404).json({ error: "Order book not found" });
+      }
+      res.json(orderBook);
+    } catch (error) {
+      console.error("Failed to fetch Polymarket order book:", error);
+      res.status(500).json({ error: "Failed to fetch order book from Polymarket" });
+    }
+  });
+
+  // Get midpoint price for a token
+  app.get("/api/polymarket/midpoint/:tokenId", async (req, res) => {
+    try {
+      const { getMidpoint } = await import("./polymarket");
+      const midpoint = await getMidpoint(req.params.tokenId);
+      if (midpoint === null) {
+        return res.status(404).json({ error: "Midpoint not found" });
+      }
+      res.json({ tokenId: req.params.tokenId, midpoint });
+    } catch (error) {
+      console.error("Failed to fetch Polymarket midpoint:", error);
+      res.status(500).json({ error: "Failed to fetch midpoint from Polymarket" });
+    }
+  });
+
+  // Get price for a token and side
+  app.get("/api/polymarket/price/:tokenId/:side", async (req, res) => {
+    try {
+      const side = req.params.side.toUpperCase() as "BUY" | "SELL";
+      if (side !== "BUY" && side !== "SELL") {
+        return res.status(400).json({ error: "Side must be BUY or SELL" });
+      }
+      const { getPrice } = await import("./polymarket");
+      const price = await getPrice(req.params.tokenId, side);
+      if (price === null) {
+        return res.status(404).json({ error: "Price not found" });
+      }
+      res.json({ tokenId: req.params.tokenId, side, price });
+    } catch (error) {
+      console.error("Failed to fetch Polymarket price:", error);
+      res.status(500).json({ error: "Failed to fetch price from Polymarket" });
+    }
+  });
+
+  // Search markets
+  app.get("/api/polymarket/search", async (req, res) => {
+    try {
+      const query = req.query.q as string;
+      if (!query) {
+        return res.status(400).json({ error: "Query parameter 'q' is required" });
+      }
+      const { searchMarkets } = await import("./polymarket");
+      const markets = await searchMarkets(query);
+      res.json(markets);
+    } catch (error) {
+      console.error("Failed to search Polymarket markets:", error);
+      res.status(500).json({ error: "Failed to search markets on Polymarket" });
+    }
+  });
+
   // ============ CLOB (Central Limit Order Book) Routes ============
   // @deprecated - CLOB system is legacy. Use /api/pools/* endpoints instead.
   // The LMSR pool system (pool-routes.ts) is the active trading system.
