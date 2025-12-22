@@ -91,6 +91,13 @@ export function PolymarketPriceChart({
 
   const { data: priceHistory, isLoading } = useQuery<PriceHistoryResponse>({
     queryKey: ["/api/polymarket/price-history", tokenId, rangeConfig.interval, rangeConfig.fidelity],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/polymarket/price-history/${tokenId}?interval=${rangeConfig.interval}&fidelity=${rangeConfig.fidelity}`
+      );
+      if (!res.ok) throw new Error("Failed to fetch price history");
+      return res.json();
+    },
     enabled: !!tokenId,
     refetchInterval: 30000,
   });
