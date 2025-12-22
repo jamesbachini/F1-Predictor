@@ -99,17 +99,6 @@ export function DepositModal({ open, onOpenChange }: DepositModalProps) {
   };
 
   const handleExternalWalletConnect = async () => {
-    // Check if running in an iframe (Replit webview)
-    const isInIframe = window !== window.top;
-    if (isInIframe) {
-      toast({
-        title: "Open in New Tab",
-        description: "Browser wallet extensions don't work inside the preview. Please open this app in a new browser tab to connect your wallet.",
-        variant: "destructive",
-      });
-      return;
-    }
-    
     const success = await connectExternalWallet();
     if (success) {
       if (userId) {

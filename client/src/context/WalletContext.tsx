@@ -50,11 +50,33 @@ declare global {
 }
 
 function getEthereumProvider(): EthereumProvider | null {
+  // First check window.phantom.ethereum (Phantom's preferred injection point)
   if (window.phantom?.ethereum) {
+    console.log("Found provider at window.phantom.ethereum");
     return window.phantom.ethereum;
   }
-  if (window.ethereum) {
+  // Check window.ethereum with isPhantom flag (Phantom can also inject here)
+  if (window.ethereum?.isPhantom) {
+    console.log("Found Phantom provider at window.ethereum");
     return window.ethereum;
+  }
+  // Fallback to standard window.ethereum (MetaMask, Rainbow, etc.)
+  if (window.ethereum) {
+    console.log("Found provider at window.ethereum");
+    return window.ethereum;
+  }
+  console.log("No Ethereum provider found");
+  return null;
+}
+
+// Wait for provider to be injected (some wallets inject after page load)
+async function waitForProvider(maxAttempts = 10, delayMs = 100): Promise<EthereumProvider | null> {
+  for (let i = 0; i < maxAttempts; i++) {
+    const provider = getEthereumProvider();
+    if (provider) {
+      return provider;
+    }
+    await new Promise(resolve => setTimeout(resolve, delayMs));
   }
   return null;
 }
@@ -204,21 +226,23 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const connectExternalWallet = useCallback(async (): Promise<boolean> => {
     setIsConnecting(true);
     try {
-      // Debug logging for provider detection
-      console.log("Detecting Ethereum provider...");
-      console.log("window.phantom:", typeof window.phantom, window.phantom);
+      console.log("Attempting to connect external wallet...");
+      console.log("window.phantom:", window.phantom);
       console.log("window.phantom?.ethereum:", window.phantom?.ethereum);
       console.log("window.ethereum:", window.ethereum);
+      console.log("window.ethereum?.isPhantom:", window.ethereum?.isPhantom);
       
-      const ethProvider = getEthereumProvider();
-      console.log("Selected provider:", ethProvider);
-      console.log("Provider isPhantom:", ethProvider?.isPhantom);
-      console.log("Provider isMetaMask:", ethProvider?.isMetaMask);
+      // Wait for provider with retry logic (handles late injection)
+      const ethProvider = await waitForProvider(15, 200);
       
       if (!ethProvider) {
-        console.error("No Ethereum provider detected");
+        console.error("No Ethereum provider detected after waiting");
         throw new Error("No wallet detected. Please install MetaMask, Phantom, or another Polygon-compatible wallet.");
       }
+      
+      console.log("Provider found:", ethProvider);
+      console.log("Provider isPhantom:", ethProvider.isPhantom);
+      console.log("Provider isMetaMask:", ethProvider.isMetaMask);
 
       const chainIdHex = await ethProvider.request({ method: "eth_chainId" });
       const currentChainId = parseInt(chainIdHex, 16);
