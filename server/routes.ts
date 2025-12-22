@@ -732,8 +732,10 @@ export async function registerRoutes(
   // Helper to check if wallet is admin
   function isAdminWallet(walletAddress: string | undefined): boolean {
     if (!walletAddress) return false;
-    const adminAddresses = (process.env.ADMIN_WALLET_ADDRESSES || "").split(",").map(a => a.trim());
-    return adminAddresses.includes(walletAddress);
+    // Support both singular and plural env var names, case-insensitive comparison
+    const adminEnv = process.env.ADMIN_WALLET_ADDRESSES || process.env.ADMIN_WALLET_ADDRESS || "";
+    const adminAddresses = adminEnv.split(",").map(a => a.trim().toLowerCase());
+    return adminAddresses.includes(walletAddress.toLowerCase());
   }
 
   // Middleware to protect admin routes
