@@ -11,12 +11,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, TrendingUp, TrendingDown, AlertCircle, ExternalLink, Wallet } from "lucide-react";
+import { Loader2, TrendingUp, TrendingDown, AlertCircle, ExternalLink, Wallet, Settings } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useMarket } from "@/context/MarketContext";
 import { useWallet } from "@/context/WalletContext";
 import { placePolymarketOrder, type ApiCredentials } from "@/lib/polymarketClient";
+import { PolymarketDepositWizard } from "./PolymarketDepositWizard";
 
 interface PolymarketOutcome {
   id: string;
@@ -53,6 +54,7 @@ export function PolymarketBetModal({ open, onClose, outcome, userBalance }: Poly
   const [amount, setAmount] = useState("");
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
   const [cachedCredentials, setCachedCredentials] = useState<ApiCredentials | null>(null);
+  const [showDepositWizard, setShowDepositWizard] = useState(false);
   const { toast } = useToast();
   const { userId } = useMarket();
   const { signer, walletAddress, walletType } = useWallet();
@@ -289,6 +291,19 @@ export function PolymarketBetModal({ open, onClose, outcome, userBalance }: Poly
             </div>
           )}
 
+          {walletAddress && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowDepositWizard(true)}
+              className="w-full"
+              data-testid="button-setup-trading"
+            >
+              <Settings className="h-4 w-4 mr-2" />
+              Setup Polymarket Trading Approvals
+            </Button>
+          )}
+
           <div className="flex gap-2">
             <Button variant="outline" onClick={onClose} className="flex-1" data-testid="button-cancel-bet">
               Cancel
@@ -323,6 +338,11 @@ export function PolymarketBetModal({ open, onClose, outcome, userBalance }: Poly
           </a>
         </div>
       </DialogContent>
+
+      <PolymarketDepositWizard
+        open={showDepositWizard}
+        onClose={() => setShowDepositWizard(false)}
+      />
     </Dialog>
   );
 }
