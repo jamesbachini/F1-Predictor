@@ -183,8 +183,12 @@ export function PolymarketBetModal({ open, onClose, outcome, userBalance }: Poly
     }
   };
 
-  const bestBid = orderBook?.bids?.[0];
-  const bestAsk = orderBook?.asks?.[0];
+  // Polymarket API returns bids ascending (lowest first) and asks descending (highest first)
+  // Best bid = highest bid (last in array), Best ask = lowest ask (last in array)
+  const sortedBids = orderBook?.bids ? [...orderBook.bids].sort((a, b) => parseFloat(b.price) - parseFloat(a.price)) : [];
+  const sortedAsks = orderBook?.asks ? [...orderBook.asks].sort((a, b) => parseFloat(a.price) - parseFloat(b.price)) : [];
+  const bestBid = sortedBids[0];
+  const bestAsk = sortedAsks[0];
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
