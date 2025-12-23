@@ -572,6 +572,95 @@ export async function registerRoutes(
     }
   });
 
+  // ============ Polymarket Relayer Client (Server-Side Proxy) ============
+  
+  // Check if relayer credentials are available
+  app.get("/api/polymarket/relayer-status", async (req, res) => {
+    try {
+      const { hasRelayerCredentials } = await import("./polymarket");
+      res.json({ available: hasRelayerCredentials() });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to check relayer status" });
+    }
+  });
+
+  // Server-side proxy for relayer requests - credentials NEVER leave the server
+  // Client sends transaction data, server signs and executes the relayer request
+  app.post("/api/polymarket/relayer-execute", async (req, res) => {
+    try {
+      const { walletAddress, walletType, transactions, description } = req.body;
+      
+      if (!walletAddress || !transactions || !Array.isArray(transactions)) {
+        return res.status(400).json({ error: "walletAddress and transactions are required" });
+      }
+
+      const { executeRelayerTransaction, hasRelayerCredentials } = await import("./polymarket");
+      
+      if (!hasRelayerCredentials()) {
+        return res.status(503).json({ 
+          error: "Relayer credentials not configured",
+          available: false 
+        });
+      }
+
+      // Execute the relayer transaction server-side (credentials never exposed)
+      const result = await executeRelayerTransaction(
+        walletAddress,
+        walletType || "proxy",
+        transactions,
+        description || ""
+      );
+      
+      if (!result.success) {
+        return res.status(400).json({ error: result.error || "Relayer transaction failed" });
+      }
+
+      res.json({ 
+        success: true,
+        transactionHash: result.transactionHash,
+        proxyAddress: result.proxyAddress
+      });
+    } catch (error) {
+      console.error("Relayer execution failed:", error);
+      res.status(500).json({ error: error instanceof Error ? error.message : "Relayer execution failed" });
+    }
+  });
+
+  // Deploy a Safe/Proxy wallet via relayer
+  app.post("/api/polymarket/relayer-deploy", async (req, res) => {
+    try {
+      const { walletAddress, walletType } = req.body;
+      
+      if (!walletAddress) {
+        return res.status(400).json({ error: "walletAddress is required" });
+      }
+
+      const { deployRelayerWallet, hasRelayerCredentials } = await import("./polymarket");
+      
+      if (!hasRelayerCredentials()) {
+        return res.status(503).json({ 
+          error: "Relayer credentials not configured",
+          available: false 
+        });
+      }
+
+      const result = await deployRelayerWallet(walletAddress, walletType || "proxy");
+      
+      if (!result.success) {
+        return res.status(400).json({ error: result.error || "Wallet deployment failed" });
+      }
+
+      res.json({ 
+        success: true,
+        transactionHash: result.transactionHash,
+        proxyAddress: result.proxyAddress
+      });
+    } catch (error) {
+      console.error("Wallet deployment failed:", error);
+      res.status(500).json({ error: error instanceof Error ? error.message : "Wallet deployment failed" });
+    }
+  });
+
   // ============ Polymarket Championship Markets ============
   
   // Get F1 Constructors Championship market from Polymarket (with 24h price changes)

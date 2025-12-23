@@ -12,8 +12,13 @@ import {
   approveCTFForNegRiskExchange,
   POLYMARKET_CONTRACTS,
 } from "@/lib/polymarketDeposit";
+import { 
+  checkRelayerAvailable,
+  approveUSDCForTradingGasless,
+  approveCTFForTradingGasless,
+} from "@/lib/polymarketRelayer";
 import { ethers } from "ethers";
-import { Check, Loader2, AlertCircle, ExternalLink, ArrowRight, Wallet, Shield, ChevronRight } from "lucide-react";
+import { Check, Loader2, AlertCircle, ExternalLink, ArrowRight, Wallet, Shield, ChevronRight, Zap } from "lucide-react";
 
 interface PolymarketDepositWizardProps {
   open: boolean;
@@ -41,10 +46,13 @@ export function PolymarketDepositWizard({ open, onClose }: PolymarketDepositWiza
   const [error, setError] = useState<string | null>(null);
   const [depositStatus, setDepositStatus] = useState<DepositStatus | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [relayerAvailable, setRelayerAvailable] = useState(false);
+  const [usingRelayer, setUsingRelayer] = useState(false);
 
   useEffect(() => {
     if (open && walletAddress) {
       checkStatus();
+      checkRelayerAvailable().then(setRelayerAvailable);
     }
   }, [open, walletAddress]);
 
@@ -76,29 +84,45 @@ export function PolymarketDepositWizard({ open, onClose }: PolymarketDepositWiza
     }
   };
 
-  const handleApproveUSDC = async () => {
+  const handleApproveUSDC = async (useRelayer: boolean = false) => {
     setLoading(true);
     setError(null);
     setTxHash(null);
+    setUsingRelayer(useRelayer);
     
     try {
-      if (!signer) {
-        throw new Error("No signer available");
+      if (useRelayer && relayerAvailable && walletAddress) {
+        // Use gasless relayer for approvals (server-side)
+        const result = await approveUSDCForTradingGasless(
+          walletAddress,
+          walletType === "magic" ? "proxy" : "safe"
+        );
+        
+        if (!result.success) {
+          throw new Error(result.error || "Gasless approval failed");
+        }
+        
+        setTxHash(result.transactionHash || null);
+      } else {
+        // Use direct wallet signing (user pays gas)
+        if (!signer) {
+          throw new Error("No signer available");
+        }
+        
+        // Approve CTF Exchange
+        const result1 = await approveUSDCForExchange(signer);
+        if (!result1.success) {
+          throw new Error(result1.error || "Failed to approve USDC for CTF Exchange");
+        }
+        
+        // Approve NegRisk CTF Exchange
+        const result2 = await approveUSDCForNegRiskExchange(signer);
+        if (!result2.success) {
+          throw new Error(result2.error || "Failed to approve USDC for NegRisk Exchange");
+        }
+        
+        setTxHash(result2.txHash || result1.txHash || null);
       }
-      
-      // Approve CTF Exchange
-      const result1 = await approveUSDCForExchange(signer);
-      if (!result1.success) {
-        throw new Error(result1.error || "Failed to approve USDC for CTF Exchange");
-      }
-      
-      // Approve NegRisk CTF Exchange
-      const result2 = await approveUSDCForNegRiskExchange(signer);
-      if (!result2.success) {
-        throw new Error(result2.error || "Failed to approve USDC for NegRisk Exchange");
-      }
-      
-      setTxHash(result2.txHash || result1.txHash || null);
       
       // Re-check status
       await checkStatus();
@@ -113,38 +137,57 @@ export function PolymarketDepositWizard({ open, onClose }: PolymarketDepositWiza
       setError(err instanceof Error ? err.message : "Approval failed");
     } finally {
       setLoading(false);
+      setUsingRelayer(false);
     }
   };
 
-  const handleApproveCTF = async () => {
+  const handleApproveCTF = async (useRelayer: boolean = false) => {
     setLoading(true);
     setError(null);
     setTxHash(null);
+    setUsingRelayer(useRelayer);
     
     try {
-      if (!signer) {
-        throw new Error("No signer available");
+      if (useRelayer && relayerAvailable && walletAddress) {
+        // Use gasless relayer for approvals (server-side)
+        const result = await approveCTFForTradingGasless(
+          walletAddress,
+          walletType === "magic" ? "proxy" : "safe"
+        );
+        
+        if (!result.success) {
+          throw new Error(result.error || "Gasless approval failed");
+        }
+        
+        setTxHash(result.transactionHash || null);
+      } else {
+        // Use direct wallet signing (user pays gas)
+        if (!signer) {
+          throw new Error("No signer available");
+        }
+        
+        // Approve CTF for CTF Exchange
+        const result1 = await approveCTFForExchange(signer);
+        if (!result1.success) {
+          throw new Error(result1.error || "Failed to approve CTF for Exchange");
+        }
+        
+        // Approve CTF for NegRisk Exchange
+        const result2 = await approveCTFForNegRiskExchange(signer);
+        if (!result2.success) {
+          throw new Error(result2.error || "Failed to approve CTF for NegRisk Exchange");
+        }
+        
+        setTxHash(result2.txHash || result1.txHash || null);
       }
       
-      // Approve CTF for CTF Exchange
-      const result1 = await approveCTFForExchange(signer);
-      if (!result1.success) {
-        throw new Error(result1.error || "Failed to approve CTF for Exchange");
-      }
-      
-      // Approve CTF for NegRisk Exchange
-      const result2 = await approveCTFForNegRiskExchange(signer);
-      if (!result2.success) {
-        throw new Error(result2.error || "Failed to approve CTF for NegRisk Exchange");
-      }
-      
-      setTxHash(result2.txHash || result1.txHash || null);
       setStep("complete");
     } catch (err) {
       console.error("CTF approval failed:", err);
       setError(err instanceof Error ? err.message : "Approval failed");
     } finally {
       setLoading(false);
+      setUsingRelayer(false);
     }
   };
 
@@ -263,23 +306,57 @@ export function PolymarketDepositWizard({ open, onClose }: PolymarketDepositWiza
               </div>
             )}
 
-            <Button 
-              onClick={handleApproveUSDC} 
-              disabled={loading}
-              className="w-full"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Approving...
-                </>
-              ) : (
-                <>
-                  Approve USDC
-                  <ChevronRight className="h-4 w-4 ml-2" />
-                </>
+            {relayerAvailable && (
+              <div className="flex items-start gap-3 p-3 bg-primary/10 rounded-lg">
+                <Zap className="h-4 w-4 text-primary mt-0.5" />
+                <div className="text-xs">
+                  <span className="font-medium">Gasless available!</span>
+                  <span className="text-muted-foreground ml-1">Polymarket pays the gas fee.</span>
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              {relayerAvailable && (
+                <Button 
+                  onClick={() => handleApproveUSDC(true)} 
+                  disabled={loading}
+                  className="flex-1"
+                  data-testid="button-approve-usdc-gasless"
+                >
+                  {loading && usingRelayer ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Approving...
+                    </>
+                  ) : (
+                    <>
+                      <Zap className="h-4 w-4 mr-2" />
+                      Gasless Approve
+                    </>
+                  )}
+                </Button>
               )}
-            </Button>
+              <Button 
+                onClick={() => handleApproveUSDC(false)} 
+                disabled={loading}
+                variant={relayerAvailable ? "outline" : "default"}
+                className={relayerAvailable ? "" : "w-full"}
+                data-testid="button-approve-usdc"
+              >
+                {loading && !usingRelayer ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Approving...
+                  </>
+                ) : (
+                  <>
+                    {relayerAvailable ? "Pay Gas" : "Approve USDC"}
+                    <ChevronRight className="h-4 w-4 ml-2" />
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         );
 
@@ -304,23 +381,57 @@ export function PolymarketDepositWizard({ open, onClose }: PolymarketDepositWiza
               </div>
             )}
 
-            <Button 
-              onClick={handleApproveCTF} 
-              disabled={loading}
-              className="w-full"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Approving...
-                </>
-              ) : (
-                <>
-                  Approve CTF Tokens
-                  <ChevronRight className="h-4 w-4 ml-2" />
-                </>
+            {relayerAvailable && (
+              <div className="flex items-start gap-3 p-3 bg-primary/10 rounded-lg">
+                <Zap className="h-4 w-4 text-primary mt-0.5" />
+                <div className="text-xs">
+                  <span className="font-medium">Gasless available!</span>
+                  <span className="text-muted-foreground ml-1">Polymarket pays the gas fee.</span>
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              {relayerAvailable && (
+                <Button 
+                  onClick={() => handleApproveCTF(true)} 
+                  disabled={loading}
+                  className="flex-1"
+                  data-testid="button-approve-ctf-gasless"
+                >
+                  {loading && usingRelayer ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Approving...
+                    </>
+                  ) : (
+                    <>
+                      <Zap className="h-4 w-4 mr-2" />
+                      Gasless Approve
+                    </>
+                  )}
+                </Button>
               )}
-            </Button>
+              <Button 
+                onClick={() => handleApproveCTF(false)} 
+                disabled={loading}
+                variant={relayerAvailable ? "outline" : "default"}
+                className={relayerAvailable ? "" : "w-full"}
+                data-testid="button-approve-ctf"
+              >
+                {loading && !usingRelayer ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Approving...
+                  </>
+                ) : (
+                  <>
+                    {relayerAvailable ? "Pay Gas" : "Approve CTF Tokens"}
+                    <ChevronRight className="h-4 w-4 ml-2" />
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         );
 

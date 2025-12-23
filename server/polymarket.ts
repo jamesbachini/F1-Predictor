@@ -1,6 +1,7 @@
 import { createHmac } from "crypto";
 import { ClobClient, Side, OrderType } from "@polymarket/clob-client";
 import { Wallet } from "@ethersproject/wallet";
+import { buildHmacSignature, BuilderApiKeyCreds } from "@polymarket/builder-signing-sdk";
 
 const GAMMA_API_URL = "https://gamma-api.polymarket.com";
 const CLOB_API_URL = "https://clob.polymarket.com";
@@ -810,5 +811,265 @@ export async function getDriversMarket(): Promise<NormalizedOutcome[]> {
   } catch (error) {
     console.error("Error fetching drivers from Polymarket:", error);
     return fallbackDrivers;
+  }
+}
+
+// ============ Polymarket Relayer Client Functions ============
+
+// Get builder credentials from environment
+function getBuilderCredentials(): BuilderApiKeyCreds | null {
+  const key = process.env.POLY_BUILDER_API_KEY;
+  const secret = process.env.POLY_BUILDER_SECRET;
+  const passphrase = process.env.POLY_BUILDER_PASSPHRASE;
+  
+  if (!key || !secret || !passphrase) {
+    console.warn("Builder API credentials not configured");
+    return null;
+  }
+  
+  return { key, secret, passphrase };
+}
+
+// Check if relayer credentials are available
+export function hasRelayerCredentials(): boolean {
+  return !!(
+    process.env.POLY_BUILDER_API_KEY &&
+    process.env.POLY_BUILDER_SECRET &&
+    process.env.POLY_BUILDER_PASSPHRASE
+  );
+}
+
+// Generate HMAC signature for relayer requests
+// This is called by the client SDK via the /api/polymarket/relayer-sign endpoint
+export interface RelayerSignRequest {
+  method: string;
+  path: string;
+  body: string;
+}
+
+export interface RelayerSignResponse {
+  POLY_BUILDER_SIGNATURE: string;
+  POLY_BUILDER_TIMESTAMP: string;
+  POLY_BUILDER_API_KEY: string;
+  POLY_BUILDER_PASSPHRASE: string;
+}
+
+function signRelayerRequest(request: RelayerSignRequest): RelayerSignResponse | null {
+  const creds = getBuilderCredentials();
+  if (!creds) {
+    return null;
+  }
+
+  const timestamp = Date.now().toString();
+  
+  const signature = buildHmacSignature(
+    creds.secret,
+    parseInt(timestamp),
+    request.method,
+    request.path,
+    request.body
+  );
+
+  return {
+    POLY_BUILDER_SIGNATURE: signature,
+    POLY_BUILDER_TIMESTAMP: timestamp,
+    POLY_BUILDER_API_KEY: creds.key,
+    POLY_BUILDER_PASSPHRASE: creds.passphrase,
+  };
+}
+
+const RELAYER_URL = "https://relayer-v2.polymarket.com";
+
+interface Transaction {
+  to: string;
+  data: string;
+  value: string; // Hex format: "0x0"
+}
+
+// Normalize transaction value to hex format
+function normalizeTransactionValue(value: string): string {
+  if (value.startsWith("0x")) return value;
+  const numValue = parseInt(value, 10) || 0;
+  return `0x${numValue.toString(16)}`;
+}
+
+interface RelayerExecutionResult {
+  success: boolean;
+  transactionHash?: string;
+  proxyAddress?: string;
+  error?: string;
+}
+
+// Execute a relayer request server-side (credentials never leave the server)
+async function executeRelayerHttpRequest(
+  method: string,
+  path: string,
+  body: object | null
+): Promise<{ id?: string; state?: string; transactionHash?: string; proxyAddress?: string; error?: string }> {
+  const bodyStr = body ? JSON.stringify(body) : "";
+  const signature = signRelayerRequest({ method, path, body: bodyStr });
+  
+  if (!signature) {
+    throw new Error("Failed to generate relayer signature");
+  }
+  
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "POLY_BUILDER_SIGNATURE": signature.POLY_BUILDER_SIGNATURE,
+    "POLY_BUILDER_TIMESTAMP": signature.POLY_BUILDER_TIMESTAMP,
+    "POLY_BUILDER_API_KEY": signature.POLY_BUILDER_API_KEY,
+    "POLY_BUILDER_PASSPHRASE": signature.POLY_BUILDER_PASSPHRASE,
+  };
+  
+  const response = await fetch(`${RELAYER_URL}${path}`, {
+    method,
+    headers,
+    body: bodyStr || undefined,
+  });
+  
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Relayer request failed: ${errorText}`);
+  }
+  
+  return response.json();
+}
+
+// Wait for a relayer transaction to complete
+async function waitForRelayerTransaction(
+  id: string,
+  walletType: "safe" | "proxy" = "proxy"
+): Promise<{ transactionHash: string; proxyAddress?: string } | null> {
+  const maxAttempts = 60;
+  const delayMs = 2000;
+  const statusPath = `/${walletType}/status/${id}`;
+  
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+    
+    try {
+      const signature = signRelayerRequest({ method: "GET", path: statusPath, body: "" });
+      if (!signature) continue;
+      
+      const response = await fetch(`${RELAYER_URL}${statusPath}`, {
+        headers: {
+          "POLY_BUILDER_SIGNATURE": signature.POLY_BUILDER_SIGNATURE,
+          "POLY_BUILDER_TIMESTAMP": signature.POLY_BUILDER_TIMESTAMP,
+          "POLY_BUILDER_API_KEY": signature.POLY_BUILDER_API_KEY,
+          "POLY_BUILDER_PASSPHRASE": signature.POLY_BUILDER_PASSPHRASE,
+        },
+      });
+      
+      if (!response.ok) continue;
+      
+      const status = await response.json();
+      
+      if (status.state === "CONFIRMED" || status.state === "SUCCESS") {
+        return {
+          transactionHash: status.transactionHash,
+          proxyAddress: status.proxyAddress,
+        };
+      }
+      
+      if (status.state === "FAILED" || status.state === "REVERTED") {
+        throw new Error(`Transaction failed: ${status.error || status.state}`);
+      }
+    } catch (error) {
+      if (attempt === maxAttempts - 1) throw error;
+    }
+  }
+  
+  throw new Error("Transaction timed out");
+}
+
+// Execute transactions via the Polymarket relayer (gasless)
+export async function executeRelayerTransaction(
+  walletAddress: string,
+  walletType: "safe" | "proxy",
+  transactions: Transaction[],
+  description: string
+): Promise<RelayerExecutionResult> {
+  try {
+    const path = walletType === "safe" ? "/safe/execute" : "/proxy/execute";
+    
+    // Normalize all transaction values to hex format
+    const normalizedTransactions = transactions.map(tx => ({
+      ...tx,
+      value: normalizeTransactionValue(tx.value),
+    }));
+    
+    const body = {
+      owner: walletAddress,
+      transactions: normalizedTransactions,
+      description,
+    };
+    
+    const response = await executeRelayerHttpRequest("POST", path, body);
+    
+    if (response.error) {
+      return { success: false, error: response.error };
+    }
+    
+    if (!response.id) {
+      return { success: false, error: "No transaction ID returned from relayer" };
+    }
+    
+    const result = await waitForRelayerTransaction(response.id, walletType);
+    if (!result) {
+      return { success: false, error: "Transaction failed" };
+    }
+    
+    return { 
+      success: true, 
+      transactionHash: result.transactionHash,
+      proxyAddress: result.proxyAddress
+    };
+  } catch (error) {
+    console.error("Relayer transaction failed:", error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : "Unknown error" 
+    };
+  }
+}
+
+// Deploy a Safe/Proxy wallet via the relayer
+export async function deployRelayerWallet(
+  walletAddress: string,
+  walletType: "safe" | "proxy"
+): Promise<RelayerExecutionResult> {
+  try {
+    const path = walletType === "safe" ? "/safe/deploy" : "/proxy/deploy";
+    
+    const body = {
+      owner: walletAddress,
+    };
+    
+    const response = await executeRelayerHttpRequest("POST", path, body);
+    
+    if (response.error) {
+      return { success: false, error: response.error };
+    }
+    
+    if (!response.id) {
+      return { success: false, error: "No deployment ID returned from relayer" };
+    }
+    
+    const result = await waitForRelayerTransaction(response.id, walletType);
+    if (!result) {
+      return { success: false, error: "Deployment failed" };
+    }
+    
+    return { 
+      success: true, 
+      transactionHash: result.transactionHash,
+      proxyAddress: result.proxyAddress
+    };
+  } catch (error) {
+    console.error("Wallet deployment failed:", error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : "Unknown error" 
+    };
   }
 }

@@ -111,6 +111,41 @@ The app uses a dual-wallet system:
 - **Status Normalization**: CLOB statuses (OPEN/LIVE/MATCHED/CANCELED/EXPIRED) mapped to schema vocabulary (open/filled/partial/cancelled/expired/pending)
 - Admin panel section for viewing/syncing Polymarket F1 markets
 
+### Polymarket Relayer Client (Gasless Transactions)
+The app integrates with Polymarket's Builder Relayer for gasless transactions:
+
+- **Server-Side Implementation** (`server/polymarket.ts`):
+  - `executeRelayerTransaction()`: Execute batched transactions via relayer
+  - `deployRelayerWallet()`: Deploy Safe/Proxy wallets
+  - Uses @polymarket/builder-signing-sdk for HMAC authentication
+  - Credentials NEVER sent to client - all signing happens server-side
+
+- **API Endpoints**:
+  - `POST /api/polymarket/relayer-execute`: Proxy for gasless transaction execution
+  - `POST /api/polymarket/relayer-deploy`: Deploy Polymarket wallets
+  - `GET /api/polymarket/relayer-status`: Check if relayer is configured
+
+- **Client-Side** (`client/src/lib/polymarketRelayer.ts`):
+  - `approveUSDCForTradingGasless()`: Approve USDC for both exchanges
+  - `approveCTFForTradingGasless()`: Approve CTF tokens for trading
+  - Simple API calls to server proxy - no credentials exposed
+
+- **Environment Variables** (Replit Secrets):
+  - POLY_BUILDER_API_KEY: Builder program API key
+  - POLY_BUILDER_SECRET: HMAC signing secret
+  - POLY_BUILDER_PASSPHRASE: Authentication passphrase
+
+- **Deposit Wizard** (`client/src/components/PolymarketDepositWizard.tsx`):
+  - Guides users through USDC and CTF approvals
+  - Shows "Gasless available!" when relayer is configured
+  - Falls back to user-paid gas if relayer unavailable
+
+- **Contract Addresses** (Polygon):
+  - USDC: 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174
+  - CTF: 0x4d97dcd97ec945f40cf65f87097ace5ea0476045
+  - CTF Exchange: 0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E
+  - NegRisk CTF Exchange: 0xC5d563A36AE78145C45a50134d48A1215220f80a
+
 ### Secure Buy Order Flow (Nonce-Based Verification)
 @deprecated - This flow is for the legacy CLOB system. The active pool system uses demo credits for trading.
 
