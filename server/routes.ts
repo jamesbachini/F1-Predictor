@@ -1048,14 +1048,38 @@ export async function registerRoutes(
       const response = await fetch(`https://clob.polymarket.com${path}`, fetchOptions);
 
       const responseText = await response.text();
-      console.log("CLOB Proxy response:", response.status, responseText.substring(0, 200));
+      console.log("CLOB Proxy response:", response.status, responseText);
 
       if (responseText.includes("<!DOCTYPE html>") || responseText.includes("Cloudflare")) {
-        return res.status(503).json({ error: "Polymarket API is blocking requests" });
+        console.error("CLOB Proxy: Cloudflare block detected");
+        return res.status(503).json({ 
+          error: "Polymarket API is blocking requests",
+          details: "Request blocked by Cloudflare. This may be a rate limit or geo-restriction."
+        });
       }
 
       if (!response.ok) {
-        return res.status(response.status).json({ error: responseText });
+        console.error("CLOB Proxy error response:", { 
+          status: response.status, 
+          path, 
+          method, 
+          response: responseText 
+        });
+        
+        // Try to parse JSON error for more details
+        try {
+          const errorJson = JSON.parse(responseText);
+          return res.status(response.status).json({ 
+            error: errorJson.error || errorJson.message || responseText,
+            details: errorJson,
+            status: response.status
+          });
+        } catch {
+          return res.status(response.status).json({ 
+            error: responseText,
+            status: response.status
+          });
+        }
       }
 
       try {
@@ -1064,9 +1088,12 @@ export async function registerRoutes(
       } catch {
         res.json({ raw: responseText });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("CLOB proxy error:", error);
-      res.status(500).json({ error: "CLOB proxy request failed" });
+      res.status(500).json({ 
+        error: "CLOB proxy request failed",
+        details: error.message || String(error)
+      });
     }
   });
 

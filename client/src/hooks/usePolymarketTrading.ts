@@ -280,7 +280,12 @@ export function usePolymarketTrading() {
 
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.message || errorData.error || `Order failed: ${response.status}`);
+          console.error("Order placement failed:", { 
+            status: response.status, 
+            error: errorData 
+          });
+          const errorMessage = errorData.details?.error || errorData.error || errorData.message || `Order failed: ${response.status}`;
+          throw new Error(errorMessage);
         }
 
         const result = await response.json();
