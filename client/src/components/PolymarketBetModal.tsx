@@ -14,6 +14,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, TrendingUp, TrendingDown, AlertCircle, ExternalLink } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useMarket } from "@/context/MarketContext";
 
 interface PolymarketOutcome {
   id: string;
@@ -49,6 +50,7 @@ export function PolymarketBetModal({ open, onClose, outcome, userBalance }: Poly
   const [side, setSide] = useState<"YES" | "NO">("YES");
   const [amount, setAmount] = useState("");
   const { toast } = useToast();
+  const { userId } = useMarket();
 
   const { data: orderBook, isLoading: orderBookLoading } = useQuery<OrderBook>({
     queryKey: ["/api/polymarket/orderbook", outcome.tokenId],
@@ -76,11 +78,13 @@ export function PolymarketBetModal({ open, onClose, outcome, userBalance }: Poly
 
   const placeBetMutation = useMutation({
     mutationFn: async (orderData: {
+      userId: string;
       tokenId: string;
       side: "BUY";
       outcome: "YES" | "NO";
       price: number;
       size: number;
+      marketName: string;
     }) => {
       const response = await apiRequest("POST", "/api/polymarket/place-order", orderData);
       return response.json();
@@ -91,6 +95,9 @@ export function PolymarketBetModal({ open, onClose, outcome, userBalance }: Poly
         description: "Your bet has been submitted to Polymarket",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/polymarket"] });
+      if (userId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/polymarket/orders", userId] });
+      }
       onClose();
     },
     onError: (error: Error) => {
@@ -103,6 +110,15 @@ export function PolymarketBetModal({ open, onClose, outcome, userBalance }: Poly
   });
 
   const handlePlaceBet = () => {
+    if (!userId) {
+      toast({
+        title: "Not Logged In",
+        description: "Please connect your account to place bets",
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (parsedAmount <= 0) {
       toast({
         title: "Invalid Amount",
@@ -122,11 +138,13 @@ export function PolymarketBetModal({ open, onClose, outcome, userBalance }: Poly
     }
 
     placeBetMutation.mutate({
+      userId,
       tokenId: selectedTokenId,
       side: "BUY",
       outcome: side,
       price: selectedPrice,
       size: shares,
+      marketName: outcome.name,
     });
   };
 

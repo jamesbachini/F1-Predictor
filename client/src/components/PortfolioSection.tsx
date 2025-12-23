@@ -1,10 +1,30 @@
-import { useState } from "react";
-import { TrendingUp, TrendingDown, Wallet, PiggyBank, BarChart3, Loader2, Car, User, ExternalLink } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, PiggyBank, BarChart3, Loader2, Car, User, ExternalLink, Clock, CheckCircle, XCircle, RefreshCw, ShoppingCart } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/context/WalletContext";
-import { useQuery } from "@tanstack/react-query";
+import { useMarket } from "@/context/MarketContext";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { format } from "date-fns";
+
+interface PolymarketOrder {
+  id: string;
+  polymarketOrderId: string | null;
+  userId: string;
+  tokenId: string;
+  marketName: string | null;
+  outcome: string;
+  side: string;
+  price: number;
+  size: number;
+  filledSize: number;
+  status: string;
+  totalCost: number;
+  createdAt: string;
+  updatedAt: string;
+  lastSyncedAt: string | null;
+}
 
 interface PolymarketOutcome {
   id: string;
@@ -52,8 +72,52 @@ function getColor(name: string, type: "team" | "driver"): string {
   return driverInfo[name]?.color || "#888888";
 }
 
+function getStatusBadge(status: string) {
+  switch (status) {
+    case "pending":
+      return (
+        <Badge variant="secondary" className="gap-1">
+          <Clock className="h-3 w-3" />
+          Pending
+        </Badge>
+      );
+    case "open":
+      return (
+        <Badge variant="outline" className="gap-1 text-blue-600 border-blue-300">
+          <RefreshCw className="h-3 w-3" />
+          Open
+        </Badge>
+      );
+    case "filled":
+      return (
+        <Badge className="gap-1 bg-green-600 text-white">
+          <CheckCircle className="h-3 w-3" />
+          Filled
+        </Badge>
+      );
+    case "partial":
+      return (
+        <Badge variant="outline" className="gap-1 text-yellow-600 border-yellow-300">
+          <RefreshCw className="h-3 w-3" />
+          Partial
+        </Badge>
+      );
+    case "cancelled":
+    case "expired":
+      return (
+        <Badge variant="destructive" className="gap-1">
+          <XCircle className="h-3 w-3" />
+          {status.charAt(0).toUpperCase() + status.slice(1)}
+        </Badge>
+      );
+    default:
+      return <Badge variant="secondary">{status}</Badge>;
+  }
+}
+
 export function PortfolioSection() {
   const { walletAddress, connectWallet, isConnecting } = useWallet();
+  const { userId } = useMarket();
 
   const { data: usdcBalance, isLoading: isLoadingBalance } = useQuery<string>({
     queryKey: ["polygon-usdc-balance", walletAddress],
@@ -73,11 +137,30 @@ export function PortfolioSection() {
     queryKey: ["/api/polymarket/drivers"],
   });
 
+  const { data: orders = [], isLoading: isLoadingOrders } = useQuery<PolymarketOrder[]>({
+    queryKey: ["/api/polymarket/orders", userId],
+    enabled: !!userId,
+  });
+
+  const syncOrdersMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/polymarket/orders/sync", { userId });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/polymarket/orders", userId] });
+    },
+  });
+
   const cashBalance = parseFloat(usdcBalance || "0");
 
   // For now, show available markets instead of positions
   // Real positions would require querying Polymarket CLOB API with wallet address
   const hasWallet = !!walletAddress;
+  
+  const openOrders = orders.filter(o => ["pending", "open", "partial"].includes(o.status));
+  const filledOrders = orders.filter(o => o.status === "filled");
+  const cancelledOrders = orders.filter(o => ["cancelled", "expired"].includes(o.status));
 
   return (
     <section className="py-12">
@@ -161,6 +244,108 @@ export function PortfolioSection() {
           </Card>
         ) : (
           <>
+            <Card className="mb-6">
+              <CardHeader className="flex flex-row items-center justify-between gap-4">
+                <CardTitle className="flex items-center gap-2">
+                  <ShoppingCart className="h-5 w-5" />
+                  Your Orders
+                </CardTitle>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => syncOrdersMutation.mutate()}
+                  disabled={syncOrdersMutation.isPending}
+                  data-testid="button-sync-orders"
+                >
+                  <RefreshCw className={`h-4 w-4 mr-1 ${syncOrdersMutation.isPending ? "animate-spin" : ""}`} />
+                  Sync
+                </Button>
+              </CardHeader>
+              <CardContent>
+                {isLoadingOrders ? (
+                  <div className="flex justify-center py-8">
+                    <Loader2 className="h-8 w-8 animate-spin" />
+                  </div>
+                ) : orders.length === 0 ? (
+                  <div className="rounded-md bg-muted/50 p-6 text-center">
+                    <p className="text-muted-foreground">
+                      No orders yet. Place bets in the Markets page to see them here.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {openOrders.length > 0 && (
+                      <div>
+                        <h4 className="font-medium text-sm text-muted-foreground mb-2">Open Orders ({openOrders.length})</h4>
+                        <div className="space-y-2">
+                          {openOrders.map((order) => (
+                            <div key={order.id} className="flex items-center justify-between p-3 rounded-md bg-muted/30" data-testid={`order-row-${order.id}`}>
+                              <div className="flex-1">
+                                <div className="font-medium">{order.marketName || "Unknown Market"}</div>
+                                <div className="text-sm text-muted-foreground">
+                                  {order.side} {order.outcome} @ {(order.price * 100).toFixed(1)}c | {order.size.toFixed(2)} shares
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  {format(new Date(order.createdAt), "MMM d, yyyy h:mm a")}
+                                </div>
+                              </div>
+                              <div className="flex flex-col items-end gap-1">
+                                {getStatusBadge(order.status)}
+                                <span className="text-sm font-medium">${order.totalCost.toFixed(2)}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {filledOrders.length > 0 && (
+                      <div>
+                        <h4 className="font-medium text-sm text-muted-foreground mb-2">Filled Orders ({filledOrders.length})</h4>
+                        <div className="space-y-2">
+                          {filledOrders.slice(0, 5).map((order) => (
+                            <div key={order.id} className="flex items-center justify-between p-3 rounded-md bg-muted/30" data-testid={`order-row-${order.id}`}>
+                              <div className="flex-1">
+                                <div className="font-medium">{order.marketName || "Unknown Market"}</div>
+                                <div className="text-sm text-muted-foreground">
+                                  {order.side} {order.outcome} @ {(order.price * 100).toFixed(1)}c | {order.size.toFixed(2)} shares
+                                </div>
+                              </div>
+                              <div className="flex flex-col items-end gap-1">
+                                {getStatusBadge(order.status)}
+                                <span className="text-sm font-medium">${order.totalCost.toFixed(2)}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {cancelledOrders.length > 0 && (
+                      <div>
+                        <h4 className="font-medium text-sm text-muted-foreground mb-2">Cancelled/Expired ({cancelledOrders.length})</h4>
+                        <div className="space-y-2">
+                          {cancelledOrders.slice(0, 3).map((order) => (
+                            <div key={order.id} className="flex items-center justify-between p-3 rounded-md bg-muted/30 opacity-60" data-testid={`order-row-${order.id}`}>
+                              <div className="flex-1">
+                                <div className="font-medium">{order.marketName || "Unknown Market"}</div>
+                                <div className="text-sm text-muted-foreground">
+                                  {order.side} {order.outcome} @ {(order.price * 100).toFixed(1)}c
+                                </div>
+                              </div>
+                              <div className="flex flex-col items-end gap-1">
+                                {getStatusBadge(order.status)}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             <Card className="mb-6">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
