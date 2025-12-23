@@ -878,7 +878,8 @@ function signRelayerRequest(request: RelayerSignRequest): RelayerSignResponse | 
   };
 }
 
-const RELAYER_URL = "https://relayer-v2.polymarket.com";
+// Polymarket Builder Relayer API base URL (paths include /v2/ prefix)
+const RELAYER_URL = "https://relayer.polymarket.com";
 
 interface Transaction {
   to: string;
@@ -942,7 +943,7 @@ async function waitForRelayerTransaction(
 ): Promise<{ transactionHash: string; proxyAddress?: string } | null> {
   const maxAttempts = 60;
   const delayMs = 2000;
-  const statusPath = `/${walletType}/status/${id}`;
+  const statusPath = `/v2/${walletType}/status/${id}`;
   
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     await new Promise(resolve => setTimeout(resolve, delayMs));
@@ -990,7 +991,7 @@ export async function executeRelayerTransaction(
   description: string
 ): Promise<RelayerExecutionResult> {
   try {
-    const path = walletType === "safe" ? "/safe/execute" : "/proxy/execute";
+    const path = walletType === "safe" ? "/v2/safe/execute" : "/v2/proxy/execute";
     
     // Normalize all transaction values to hex format
     const normalizedTransactions = transactions.map(tx => ({
@@ -1039,7 +1040,7 @@ export async function deployRelayerWallet(
   walletType: "safe" | "proxy"
 ): Promise<RelayerExecutionResult> {
   try {
-    const path = walletType === "safe" ? "/safe/deploy" : "/proxy/deploy";
+    const path = walletType === "safe" ? "/v2/safe/deploy" : "/v2/proxy/deploy";
     
     const body = {
       owner: walletAddress,
