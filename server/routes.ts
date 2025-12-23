@@ -971,6 +971,105 @@ export async function registerRoutes(
     }
   });
 
+  // Generic CLOB API proxy - forwards authenticated requests to Polymarket CLOB
+  // This avoids CORS issues when calling from production
+  app.post("/api/polymarket/clob-proxy", async (req, res) => {
+    try {
+      const { method, path, body, credentials, walletAddress, builderHeaders } = req.body;
+      
+      if (!method || !path || !credentials || !walletAddress) {
+        return res.status(400).json({ error: "Missing required fields" });
+      }
+
+      const { apiKey, secret, passphrase } = credentials;
+      if (!apiKey || !secret || !passphrase) {
+        return res.status(400).json({ error: "Missing API credentials" });
+      }
+
+      console.log("CLOB Proxy request:", { method, path, walletAddress: walletAddress.substring(0, 10) + "...", hasBuilderHeaders: !!builderHeaders });
+
+      // Create HMAC signature for the request
+      const timestamp = Math.floor(Date.now() / 1000).toString();
+      const bodyStr = body ? JSON.stringify(body) : "";
+      const message = timestamp + method.toUpperCase() + path + bodyStr;
+      
+      // Decode secret (base64url or hex)
+      let secretBytes: Buffer;
+      if (/^[0-9a-fA-F]+$/.test(secret) && secret.length % 2 === 0) {
+        secretBytes = Buffer.from(secret, "hex");
+      } else {
+        // Convert base64url to base64
+        let base64 = secret.replace(/-/g, '+').replace(/_/g, '/');
+        while (base64.length % 4) base64 += '=';
+        secretBytes = Buffer.from(base64, "base64");
+      }
+
+      const crypto = await import("crypto");
+      const hmac = crypto.createHmac("sha256", secretBytes);
+      hmac.update(message);
+      const hmacSignature = hmac.digest("base64");
+
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "POLY_API_KEY": apiKey,
+        "POLY_PASSPHRASE": passphrase,
+        "POLY_TIMESTAMP": timestamp,
+        "POLY_SIGNATURE": hmacSignature,
+        "POLY_ADDRESS": walletAddress,
+        "POLY_NONCE": timestamp,
+      };
+
+      // Forward builder headers if provided (for builder program integration)
+      if (builderHeaders) {
+        if (builderHeaders.POLY_BUILDER_API_KEY) {
+          headers["POLY_BUILDER_API_KEY"] = builderHeaders.POLY_BUILDER_API_KEY;
+        }
+        if (builderHeaders.POLY_BUILDER_PASSPHRASE) {
+          headers["POLY_BUILDER_PASSPHRASE"] = builderHeaders.POLY_BUILDER_PASSPHRASE;
+        }
+        if (builderHeaders.POLY_BUILDER_SIGNATURE) {
+          headers["POLY_BUILDER_SIGNATURE"] = builderHeaders.POLY_BUILDER_SIGNATURE;
+        }
+        if (builderHeaders.POLY_BUILDER_TIMESTAMP) {
+          headers["POLY_BUILDER_TIMESTAMP"] = builderHeaders.POLY_BUILDER_TIMESTAMP;
+        }
+      }
+
+      const fetchOptions: RequestInit = {
+        method: method.toUpperCase(),
+        headers,
+      };
+
+      if (body && (method.toUpperCase() === "POST" || method.toUpperCase() === "PUT")) {
+        fetchOptions.body = bodyStr;
+      }
+
+      const response = await fetch(`https://clob.polymarket.com${path}`, fetchOptions);
+
+      const responseText = await response.text();
+      console.log("CLOB Proxy response:", response.status, responseText.substring(0, 200));
+
+      if (responseText.includes("<!DOCTYPE html>") || responseText.includes("Cloudflare")) {
+        return res.status(503).json({ error: "Polymarket API is blocking requests" });
+      }
+
+      if (!response.ok) {
+        return res.status(response.status).json({ error: responseText });
+      }
+
+      try {
+        const data = JSON.parse(responseText);
+        res.json(data);
+      } catch {
+        res.json({ raw: responseText });
+      }
+    } catch (error) {
+      console.error("CLOB proxy error:", error);
+      res.status(500).json({ error: "CLOB proxy request failed" });
+    }
+  });
+
   // Record a client-submitted Polymarket order (for client-side signing flow)
   app.post("/api/polymarket/record-order", async (req, res) => {
     try {

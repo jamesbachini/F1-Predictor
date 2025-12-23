@@ -1,6 +1,7 @@
 import { ethers } from "ethers";
 
-const POLYMARKET_API_BASE = "https://clob.polymarket.com";
+// Use server proxy to avoid CORS issues in production
+const API_PROXY_BASE = "/api/polymarket";
 const POLYGON_CHAIN_ID = 137;
 
 export interface PolymarketMarket {
@@ -36,7 +37,8 @@ export interface PolymarketOrder {
 
 export async function fetchF1Markets(): Promise<PolymarketMarket[]> {
   try {
-    const response = await fetch(`${POLYMARKET_API_BASE}/markets`, {
+    // Use server proxy endpoint which already filters for F1 markets
+    const response = await fetch(`${API_PROXY_BASE}/f1-markets/all`, {
       method: "GET",
       headers: {
         "Accept": "application/json",
@@ -49,23 +51,7 @@ export async function fetchF1Markets(): Promise<PolymarketMarket[]> {
     
     const markets = await response.json();
     
-    const f1Markets = markets.filter((market: any) => {
-      const question = market.question?.toLowerCase() || "";
-      const description = market.description?.toLowerCase() || "";
-      const category = market.category?.toLowerCase() || "";
-      
-      return (
-        question.includes("formula 1") ||
-        question.includes("formula one") ||
-        question.includes("f1") ||
-        description.includes("formula 1") ||
-        description.includes("formula one") ||
-        category.includes("motorsport") ||
-        category.includes("f1")
-      );
-    });
-    
-    return f1Markets.map((market: any) => ({
+    return markets.map((market: any) => ({
       id: market.condition_id || market.id,
       question: market.question,
       description: market.description,
@@ -89,7 +75,8 @@ export async function fetchF1Markets(): Promise<PolymarketMarket[]> {
 
 export async function fetchMarketPrices(tokenId: string): Promise<{ yes: number; no: number }> {
   try {
-    const response = await fetch(`${POLYMARKET_API_BASE}/prices?token_ids=${tokenId}`, {
+    // Use server proxy for price endpoint
+    const response = await fetch(`${API_PROXY_BASE}/midpoint/${tokenId}`, {
       method: "GET",
       headers: {
         "Accept": "application/json",
@@ -103,8 +90,8 @@ export async function fetchMarketPrices(tokenId: string): Promise<{ yes: number;
     const data = await response.json();
     
     return {
-      yes: parseFloat(data[tokenId] || "0.5"),
-      no: 1 - parseFloat(data[tokenId] || "0.5"),
+      yes: parseFloat(data.mid || data.price || "0.5"),
+      no: 1 - parseFloat(data.mid || data.price || "0.5"),
     };
   } catch (error) {
     console.error("Error fetching market prices:", error);
@@ -117,7 +104,8 @@ export async function fetchOrderbook(tokenId: string): Promise<{
   asks: { price: number; size: number }[];
 }> {
   try {
-    const response = await fetch(`${POLYMARKET_API_BASE}/book?token_id=${tokenId}`, {
+    // Use server proxy for orderbook endpoint
+    const response = await fetch(`${API_PROXY_BASE}/orderbook/${tokenId}`, {
       method: "GET",
       headers: {
         "Accept": "application/json",

@@ -2,7 +2,8 @@ import { useState, useCallback, useRef } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "@/context/WalletContext";
 
-const CLOB_API_URL = "https://clob.polymarket.com";
+// Use server proxy to avoid CORS issues in production
+const API_PROXY_BASE = "/api/polymarket";
 const POLYGON_CHAIN_ID = 137;
 
 interface ApiCredentials {
@@ -163,16 +164,17 @@ export function usePolymarketTrading() {
         signature = await (signer as any).signTypedData(domain, types, value);
       }
 
-      const response = await fetch(`${CLOB_API_URL}/auth/derive-api-key`, {
+      // Use server proxy to avoid CORS issues in production
+      const response = await fetch(`${API_PROXY_BASE}/derive-credentials`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          address: walletAddress,
+          walletAddress,
+          signature,
           timestamp: String(nonce),
           nonce,
-          signature,
         }),
       });
 
@@ -256,15 +258,29 @@ export function usePolymarketTrading() {
           headers["POLY_BUILDER_TIMESTAMP"] = builderHeaders.POLY_BUILDER_TIMESTAMP;
         }
 
-        const response = await fetch(`${CLOB_API_URL}${path}`, {
-          method,
-          headers,
-          body,
+        // Use server proxy to avoid CORS issues in production
+        const response = await fetch(`${API_PROXY_BASE}/clob-proxy`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            method,
+            path,
+            body: orderData,
+            credentials: {
+              apiKey: creds.apiKey,
+              secret: creds.secret,
+              passphrase: creds.passphrase,
+            },
+            walletAddress,
+            builderHeaders: builderHeaders || undefined,
+          }),
         });
 
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.message || `Order failed: ${response.status}`);
+          throw new Error(errorData.message || errorData.error || `Order failed: ${response.status}`);
         }
 
         const result = await response.json();
@@ -325,14 +341,28 @@ export function usePolymarketTrading() {
           headers["POLY_BUILDER_TIMESTAMP"] = builderHeaders.POLY_BUILDER_TIMESTAMP;
         }
 
-        const response = await fetch(`${CLOB_API_URL}${path}`, {
-          method,
-          headers,
+        // Use server proxy to avoid CORS issues in production
+        const response = await fetch(`${API_PROXY_BASE}/clob-proxy`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            method,
+            path,
+            credentials: {
+              apiKey: creds.apiKey,
+              secret: creds.secret,
+              passphrase: creds.passphrase,
+            },
+            walletAddress,
+            builderHeaders: builderHeaders || undefined,
+          }),
         });
 
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.message || `Cancel failed: ${response.status}`);
+          throw new Error(errorData.message || errorData.error || `Cancel failed: ${response.status}`);
         }
 
         return { success: true };
@@ -369,16 +399,22 @@ export function usePolymarketTrading() {
         path
       );
 
-      const response = await fetch(`${CLOB_API_URL}${path}`, {
-        method,
+      // Use server proxy to avoid CORS issues in production
+      const response = await fetch(`${API_PROXY_BASE}/clob-proxy`, {
+        method: "POST",
         headers: {
-          "POLY_ADDRESS": walletAddress,
-          "POLY_SIGNATURE": hmacSignature,
-          "POLY_TIMESTAMP": timestamp,
-          "POLY_NONCE": timestamp,
-          "POLY_API_KEY": creds.apiKey,
-          "POLY_PASSPHRASE": creds.passphrase,
+          "Content-Type": "application/json",
         },
+        body: JSON.stringify({
+          method,
+          path,
+          credentials: {
+            apiKey: creds.apiKey,
+            secret: creds.secret,
+            passphrase: creds.passphrase,
+          },
+          walletAddress,
+        }),
       });
 
       if (!response.ok) {

@@ -392,9 +392,8 @@ export async function placePolymarketOrder(
 
 export async function getOrderBook(tokenId: string): Promise<any> {
   try {
-    const response = await fetch(`${CLOB_API_URL}/book?token_id=${tokenId}`, {
-      headers: BROWSER_HEADERS,
-    });
+    // Use server proxy to avoid CORS issues in production
+    const response = await fetch(`/api/polymarket/orderbook/${tokenId}`);
     
     if (!response.ok) {
       return null;
@@ -409,9 +408,8 @@ export async function getOrderBook(tokenId: string): Promise<any> {
 
 export async function getMidpoint(tokenId: string): Promise<number | null> {
   try {
-    const response = await fetch(`${CLOB_API_URL}/midpoint?token_id=${tokenId}`, {
-      headers: BROWSER_HEADERS,
-    });
+    // Use server proxy to avoid CORS issues in production
+    const response = await fetch(`/api/polymarket/midpoint/${tokenId}`);
     
     if (!response.ok) {
       return null;
