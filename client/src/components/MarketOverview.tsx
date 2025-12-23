@@ -8,7 +8,7 @@ import { useMarket, type F1Team } from "@/context/MarketContext";
 import { useWallet } from "@/context/WalletContext";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
-import { Car, User, ExternalLink, Loader2 } from "lucide-react";
+import { Car, User, Loader2 } from "lucide-react";
 
 interface MarketOverviewProps {
   onBuyTeam?: (team: F1Team) => void;
@@ -160,22 +160,11 @@ export function MarketOverview({ onBuyTeam, onBuyDriver }: MarketOverviewProps) 
   return (
     <section className="py-12">
       <div className="mx-auto max-w-7xl px-4">
-        <div className="mb-6 flex items-center justify-between gap-4 flex-wrap">
-          <div>
-            <h2 className="text-2xl font-bold" data-testid="text-market-title">F1 2026 Championship</h2>
-            <p className="text-muted-foreground">
-              Live odds from Polymarket prediction markets
-            </p>
-          </div>
-          <a
-            href="https://polymarket.com/event/f1-constructors-champion"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1 text-sm text-primary hover:underline"
-          >
-            <ExternalLink className="h-4 w-4" />
-            View on Polymarket
-          </a>
+        <div className="mb-6">
+          <h2 className="text-2xl font-bold" data-testid="text-market-title">F1 2026 Championship</h2>
+          <p className="text-muted-foreground">
+            Live odds from prediction markets
+          </p>
         </div>
 
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "teams" | "drivers")} className="w-full">

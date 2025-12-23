@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWallet } from "@/context/WalletContext";
-import { TrendingUp, Wallet, Car, User, ExternalLink } from "lucide-react";
+import { TrendingUp, Wallet, Car, User } from "lucide-react";
 import { DepositModal } from "@/components/DepositModal";
 import { PolymarketBetModal } from "@/components/PolymarketBetModal";
 
@@ -257,16 +257,6 @@ export default function Markets() {
                         >
                           Bet
                         </Button>
-                        
-                        <a 
-                          href={`https://polymarket.com`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-                        >
-                          <ExternalLink className="h-3 w-3" />
-                          View on Polymarket
-                        </a>
                       </CardContent>
                     </Card>
                   );
@@ -337,16 +327,6 @@ export default function Markets() {
                         >
                           Bet
                         </Button>
-                        
-                        <a 
-                          href={`https://polymarket.com`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-                        >
-                          <ExternalLink className="h-3 w-3" />
-                          View on Polymarket
-                        </a>
                       </CardContent>
                     </Card>
                   );
