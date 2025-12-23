@@ -971,6 +971,112 @@ export async function registerRoutes(
     }
   });
 
+  // Builder-only order placement - uses builder credentials without requiring per-user API keys
+  // This is for users who haven't been onboarded to Polymarket yet
+  app.post("/api/polymarket/builder-order", async (req, res) => {
+    try {
+      const { order, userSignature, walletAddress } = req.body;
+      
+      if (!order || !userSignature || !walletAddress) {
+        return res.status(400).json({ error: "Missing required fields: order, userSignature, walletAddress" });
+      }
+
+      // Get builder credentials from environment
+      const builderApiKey = process.env.POLY_BUILDER_API_KEY;
+      const builderSecret = process.env.POLY_BUILDER_SECRET;
+      const builderPassphrase = process.env.POLY_BUILDER_PASSPHRASE;
+      
+      if (!builderApiKey || !builderSecret || !builderPassphrase) {
+        console.error("Builder credentials not configured");
+        return res.status(503).json({ error: "Builder program not configured" });
+      }
+
+      console.log("Builder-only order:", { 
+        walletAddress: walletAddress.substring(0, 10) + "...",
+        tokenId: order.tokenID,
+        side: order.side,
+        price: order.price,
+        size: order.size
+      });
+
+      // Create HMAC signature for builder authentication
+      const timestamp = Math.floor(Date.now() / 1000).toString();
+      const method = "POST";
+      const path = "/order";
+      const bodyStr = JSON.stringify(order);
+      const message = timestamp + method + path + bodyStr;
+      
+      // Decode builder secret (base64)
+      let secretBytes: Buffer;
+      if (/^[0-9a-fA-F]+$/.test(builderSecret) && builderSecret.length % 2 === 0) {
+        secretBytes = Buffer.from(builderSecret, "hex");
+      } else {
+        let base64 = builderSecret.replace(/-/g, '+').replace(/_/g, '/');
+        while (base64.length % 4) base64 += '=';
+        secretBytes = Buffer.from(base64, "base64");
+      }
+
+      const crypto = await import("crypto");
+      const hmac = crypto.createHmac("sha256", secretBytes);
+      hmac.update(message);
+      const builderSignature = hmac.digest("base64");
+
+      // Build request with builder headers for submitting on behalf of user
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "POLY_ADDRESS": walletAddress,
+        "POLY_BUILDER_API_KEY": builderApiKey,
+        "POLY_BUILDER_PASSPHRASE": builderPassphrase,
+        "POLY_BUILDER_SIGNATURE": builderSignature,
+        "POLY_BUILDER_TIMESTAMP": timestamp,
+      };
+
+      // Include the user's EIP-712 signature in the order body
+      const orderWithSignature = {
+        ...order,
+        signature: userSignature,
+      };
+
+      const response = await fetch("https://clob.polymarket.com/order", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(orderWithSignature),
+      });
+
+      const responseText = await response.text();
+      console.log("Builder order response:", response.status, responseText);
+
+      if (responseText.includes("<!DOCTYPE html>") || responseText.includes("Cloudflare")) {
+        return res.status(503).json({ 
+          error: "Polymarket API is blocking requests",
+          details: "Request blocked by Cloudflare"
+        });
+      }
+
+      if (!response.ok) {
+        try {
+          const errorJson = JSON.parse(responseText);
+          return res.status(response.status).json({ 
+            error: errorJson.error || errorJson.message || responseText,
+            details: errorJson
+          });
+        } catch {
+          return res.status(response.status).json({ error: responseText });
+        }
+      }
+
+      const data = JSON.parse(responseText);
+      res.json(data);
+    } catch (error: any) {
+      console.error("Builder order error:", error);
+      res.status(500).json({ 
+        error: "Builder order failed",
+        details: error.message || String(error)
+      });
+    }
+  });
+
   // Generic CLOB API proxy - forwards authenticated requests to Polymarket CLOB
   // This avoids CORS issues when calling from production
   app.post("/api/polymarket/clob-proxy", async (req, res) => {

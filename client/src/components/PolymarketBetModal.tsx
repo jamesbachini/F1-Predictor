@@ -57,7 +57,7 @@ export function PolymarketBetModal({ open, onClose, outcome, userBalance }: Poly
   const { toast } = useToast();
   const { userId } = useMarket();
   const { signer, walletAddress, walletType } = useWallet();
-  const { placeOrder } = usePolymarketTrading();
+  const { placeBuilderOrder, isPlacingOrder: hookIsPlacing } = usePolymarketTrading();
 
   const { data: orderBook, isLoading: orderBookLoading } = useQuery<OrderBook>({
     queryKey: ["/api/polymarket/orderbook", outcome.tokenId],
@@ -128,7 +128,7 @@ export function PolymarketBetModal({ open, onClose, outcome, userBalance }: Poly
         description: "Please sign the order in your wallet...",
       });
 
-      const result = await placeOrder({
+      const result = await placeBuilderOrder({
         tokenId: selectedTokenId,
         price: selectedPrice,
         size: shares,

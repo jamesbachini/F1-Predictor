@@ -61,6 +61,31 @@ interface OrderResult {
   error?: string;
 }
 
+// Polymarket order EIP-712 domain and types for signing
+const POLYMARKET_ORDER_DOMAIN = {
+  name: "Polymarket CTF Exchange",
+  version: "1",
+  chainId: POLYGON_CHAIN_ID,
+  verifyingContract: "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E" as const, // CTF Exchange
+};
+
+const ORDER_TYPES = {
+  Order: [
+    { name: "salt", type: "uint256" },
+    { name: "maker", type: "address" },
+    { name: "signer", type: "address" },
+    { name: "taker", type: "address" },
+    { name: "tokenId", type: "uint256" },
+    { name: "makerAmount", type: "uint256" },
+    { name: "takerAmount", type: "uint256" },
+    { name: "expiration", type: "uint256" },
+    { name: "nonce", type: "uint256" },
+    { name: "feeRateBps", type: "uint256" },
+    { name: "side", type: "uint8" },
+    { name: "signatureType", type: "uint8" },
+  ],
+};
+
 async function generateHmacSignature(
   secret: string,
   timestamp: string,
@@ -98,8 +123,142 @@ export function usePolymarketTrading() {
   const { walletAddress, signer, walletType } = useWallet();
   const isConnected = !!walletAddress;
   const [isDerivingCreds, setIsDerivingCreds] = useState(false);
+  const [isPlacingOrder, setIsPlacingOrder] = useState(false);
   const apiCredsRef = useRef<ApiCredentials | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Builder-only order placement - bypasses per-user API credential derivation
+  // Uses EIP-712 signed order + builder credentials
+  const placeBuilderOrder = useCallback(
+    async (params: OrderParams): Promise<OrderResult> => {
+      if (!signer || !walletAddress) {
+        return { success: false, error: "Wallet not connected" };
+      }
+
+      setIsPlacingOrder(true);
+      setError(null);
+
+      try {
+        // Convert price/size to amounts (6 decimals for USDC)
+        const USDC_DECIMALS = 6;
+        const priceScaled = Math.round(params.price * 100); // Price in cents (0-100)
+        const sizeScaled = Math.round(params.size * Math.pow(10, USDC_DECIMALS));
+        
+        // For BUY orders: makerAmount = collateral (price * size), takerAmount = size
+        // For SELL orders: makerAmount = size, takerAmount = collateral
+        const isBuy = params.side === "BUY";
+        const collateral = Math.round(params.price * params.size * Math.pow(10, USDC_DECIMALS));
+        
+        const makerAmount = isBuy ? collateral.toString() : sizeScaled.toString();
+        const takerAmount = isBuy ? sizeScaled.toString() : collateral.toString();
+
+        // Build the order struct for EIP-712 signing
+        const salt = Date.now().toString() + Math.floor(Math.random() * 1000000);
+        const expiration = Math.floor(Date.now() / 1000) + 86400; // 24 hours
+        const nonce = Date.now();
+
+        const orderStruct = {
+          salt: salt,
+          maker: walletAddress,
+          signer: walletAddress,
+          taker: "0x0000000000000000000000000000000000000000", // Anyone can fill
+          tokenId: params.tokenId,
+          makerAmount: makerAmount,
+          takerAmount: takerAmount,
+          expiration: expiration.toString(),
+          nonce: nonce.toString(),
+          feeRateBps: "0", // No fee
+          side: isBuy ? 0 : 1, // 0 = BUY, 1 = SELL
+          signatureType: 0, // EOA signature
+        };
+
+        console.log("Signing order with EIP-712:", orderStruct);
+
+        // Sign the order using EIP-712
+        let signature: string;
+        
+        const typedDataPayload = JSON.stringify({
+          types: {
+            EIP712Domain: [
+              { name: "name", type: "string" },
+              { name: "version", type: "string" },
+              { name: "chainId", type: "uint256" },
+              { name: "verifyingContract", type: "address" },
+            ],
+            ...ORDER_TYPES,
+          },
+          primaryType: "Order",
+          domain: POLYMARKET_ORDER_DOMAIN,
+          message: orderStruct,
+        });
+
+        if (walletType === "magic" && signer.provider) {
+          const provider = signer.provider as ethers.BrowserProvider;
+          signature = await provider.send("eth_signTypedData_v4", [
+            walletAddress,
+            typedDataPayload,
+          ]);
+        } else {
+          signature = await (signer as any).signTypedData(
+            POLYMARKET_ORDER_DOMAIN,
+            ORDER_TYPES,
+            orderStruct
+          );
+        }
+
+        console.log("Order signed, submitting via builder endpoint");
+
+        // Submit to builder-order endpoint (server uses builder credentials)
+        const response = await fetch(`${API_PROXY_BASE}/builder-order`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            order: {
+              tokenID: params.tokenId,
+              price: params.price,
+              size: params.size,
+              type: "GTC",
+              salt: orderStruct.salt,
+              maker: orderStruct.maker,
+              signer: orderStruct.signer,
+              taker: orderStruct.taker,
+              makerAmount: orderStruct.makerAmount,
+              takerAmount: orderStruct.takerAmount,
+              expiration: orderStruct.expiration,
+              nonce: orderStruct.nonce,
+              feeRateBps: orderStruct.feeRateBps,
+              side: orderStruct.side,
+              signatureType: orderStruct.signatureType,
+            },
+            userSignature: signature,
+            walletAddress,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          console.error("Builder order failed:", errorData);
+          throw new Error(errorData.error || `Order failed: ${response.status}`);
+        }
+
+        const result = await response.json();
+        return {
+          success: true,
+          orderId: result.orderID || result.id,
+        };
+      } catch (err: any) {
+        console.error("Builder order error:", err);
+        setError(err.message || "Failed to place order");
+        return {
+          success: false,
+          error: err.message || "Failed to place order",
+        };
+      } finally {
+        setIsPlacingOrder(false);
+      }
+    },
+    [signer, walletAddress, walletType]
+  );
 
   const deriveApiCredentials = useCallback(async (): Promise<ApiCredentials | null> => {
     if (!signer || !walletAddress) {
@@ -441,10 +600,12 @@ export function usePolymarketTrading() {
     isConnected,
     walletAddress,
     isDerivingCreds,
+    isPlacingOrder,
     hasApiCreds: !!apiCredsRef.current,
     error,
     deriveApiCredentials,
     placeOrder,
+    placeBuilderOrder,
     cancelOrder,
     getOpenOrders,
     clearCredentials,
