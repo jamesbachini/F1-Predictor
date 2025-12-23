@@ -574,11 +574,21 @@ export async function registerRoutes(
 
   // ============ Polymarket Championship Markets ============
   
-  // Get F1 Constructors Championship market from Polymarket
+  // Get F1 Constructors Championship market from Polymarket (with 24h price changes)
   app.get("/api/polymarket/constructors", async (req, res) => {
     try {
-      const { getConstructorsMarket } = await import("./polymarket");
+      const { getConstructorsMarket, getPriceChanges } = await import("./polymarket");
       const outcomes = await getConstructorsMarket();
+      
+      // Fetch 24h price changes for all tokens (filter out empty/invalid token IDs)
+      const tokenIds = outcomes.map(o => o.tokenId).filter(id => id && id.length > 10);
+      if (tokenIds.length > 0) {
+        const priceChanges = await getPriceChanges(tokenIds);
+        for (const outcome of outcomes) {
+          outcome.priceChange = priceChanges.get(outcome.tokenId) || 0;
+        }
+      }
+      
       res.json(outcomes);
     } catch (error) {
       console.error("Failed to fetch constructors market:", error);
@@ -586,11 +596,21 @@ export async function registerRoutes(
     }
   });
 
-  // Get F1 Drivers Championship market from Polymarket
+  // Get F1 Drivers Championship market from Polymarket (with 24h price changes)
   app.get("/api/polymarket/drivers", async (req, res) => {
     try {
-      const { getDriversMarket } = await import("./polymarket");
+      const { getDriversMarket, getPriceChanges } = await import("./polymarket");
       const outcomes = await getDriversMarket();
+      
+      // Fetch 24h price changes for all tokens (filter out empty/invalid token IDs)
+      const tokenIds = outcomes.map(o => o.tokenId).filter(id => id && id.length > 10);
+      if (tokenIds.length > 0) {
+        const priceChanges = await getPriceChanges(tokenIds);
+        for (const outcome of outcomes) {
+          outcome.priceChange = priceChanges.get(outcome.tokenId) || 0;
+        }
+      }
+      
       res.json(outcomes);
     } catch (error) {
       console.error("Failed to fetch drivers market:", error);

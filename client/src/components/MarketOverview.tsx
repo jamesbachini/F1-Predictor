@@ -27,6 +27,7 @@ interface PolymarketOutcome {
   conditionId: string;
   questionId: string;
   image?: string;
+  priceChange?: number;
 }
 
 interface DriverFromAPI {
@@ -116,7 +117,7 @@ export function MarketOverview({ onBuyTeam, onBuyDriver }: MarketOverviewProps) 
     shortName: outcome.name.substring(0, 3).toUpperCase(),
     color: teamColors[outcome.name] || "#888888",
     price: outcome.price,
-    priceChange: 0, // Would need historical data
+    priceChange: outcome.priceChange || 0,
     totalShares: 10000,
     availableShares: 10000,
   }));
@@ -130,7 +131,7 @@ export function MarketOverview({ onBuyTeam, onBuyDriver }: MarketOverviewProps) 
     number: index + 1,
     color: driverTeamColors[outcome.name] || "#888888",
     price: outcome.price,
-    priceChange: 0,
+    priceChange: outcome.priceChange || 0,
   }));
 
   const sortedTeams = [...teamsFromPolymarket].sort((a, b) => b.price - a.price);

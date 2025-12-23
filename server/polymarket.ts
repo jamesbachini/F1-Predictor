@@ -3,6 +3,92 @@ import { createHmac } from "crypto";
 const GAMMA_API_URL = "https://gamma-api.polymarket.com";
 const CLOB_API_URL = "https://clob.polymarket.com";
 
+// Cache for 24h price changes - per-token timestamps for proper expiration
+interface TokenPriceChange {
+  change: number;
+  timestamp: number;
+}
+const priceChangeCache = new Map<string, TokenPriceChange>();
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+// Fetch 24h price change for a single token
+async function fetch24hPriceChange(tokenId: string): Promise<number> {
+  try {
+    const response = await fetch(
+      `${CLOB_API_URL}/prices-history?market=${tokenId}&interval=1d&fidelity=60`,
+      {
+        headers: {
+          "Accept": "application/json",
+          "User-Agent": "Mozilla/5.0",
+        },
+      }
+    );
+    
+    if (!response.ok) return 0;
+    
+    const data = await response.json();
+    if (!data?.history || data.history.length < 2) return 0;
+    
+    // Get the first (oldest) and last (newest) prices from 24h history
+    const history = data.history;
+    const oldestPrice = parseFloat(history[0]?.p || "0");
+    const newestPrice = parseFloat(history[history.length - 1]?.p || "0");
+    
+    if (oldestPrice === 0) return 0;
+    
+    return ((newestPrice - oldestPrice) / oldestPrice) * 100;
+  } catch (error) {
+    return 0;
+  }
+}
+
+// Batch fetch price changes for multiple tokens with per-token caching
+export async function getPriceChanges(tokenIds: string[]): Promise<Map<string, number>> {
+  const now = Date.now();
+  const result = new Map<string, number>();
+  const tokensToFetch: string[] = [];
+  
+  // Check cache for each token, collect those that need fetching
+  for (const tokenId of tokenIds) {
+    const cached = priceChangeCache.get(tokenId);
+    if (cached && now - cached.timestamp < CACHE_DURATION) {
+      result.set(tokenId, cached.change);
+    } else {
+      tokensToFetch.push(tokenId);
+    }
+  }
+  
+  // If all tokens are cached, return immediately
+  if (tokensToFetch.length === 0) {
+    return result;
+  }
+  
+  // Fetch price changes for missing tokens in parallel (with rate limiting)
+  const batchSize = 5;
+  for (let i = 0; i < tokensToFetch.length; i += batchSize) {
+    const batch = tokensToFetch.slice(i, i + batchSize);
+    const results = await Promise.all(
+      batch.map(async (tokenId) => {
+        const change = await fetch24hPriceChange(tokenId);
+        return { tokenId, change };
+      })
+    );
+    
+    for (const { tokenId, change } of results) {
+      // Update cache with per-token timestamp
+      priceChangeCache.set(tokenId, { change, timestamp: now });
+      result.set(tokenId, change);
+    }
+    
+    // Small delay between batches to respect rate limits
+    if (i + batchSize < tokensToFetch.length) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+  
+  return result;
+}
+
 export interface BuilderSignatureHeaders {
   POLY_BUILDER_API_KEY: string;
   POLY_BUILDER_PASSPHRASE: string;
@@ -338,6 +424,7 @@ export interface NormalizedOutcome {
   conditionId: string;
   questionId: string;
   image?: string;
+  priceChange?: number;
 }
 
 // Fallback F1 Constructors data based on current Polymarket markets
