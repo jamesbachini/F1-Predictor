@@ -670,11 +670,11 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Missing required fields: userId, tokenId, side, outcome, price, size" });
       }
 
-      const { hasBuilderCredentials } = await import("./polymarket");
+      const { hasOrderExecutionCredentials, executePolymarketOrder } = await import("./polymarket");
       
-      if (!hasBuilderCredentials()) {
+      if (!hasOrderExecutionCredentials()) {
         return res.status(503).json({ 
-          error: "Builder credentials not configured. Orders cannot be placed.",
+          error: "Order execution credentials not configured. Orders cannot be placed.",
           available: false 
         });
       }
@@ -682,7 +682,7 @@ export async function registerRoutes(
       // Calculate total cost (price * size for buy orders)
       const totalCost = price * size;
 
-      // Save order to database with pending status
+      // Save order to database with pending status first
       const savedOrder = await storage.createPolymarketOrder({
         userId,
         tokenId,
@@ -697,7 +697,7 @@ export async function registerRoutes(
         polymarketOrderId: null,
       });
 
-      console.log("Polymarket order saved:", {
+      console.log("Polymarket order saved to database:", {
         orderId: savedOrder.id,
         tokenId,
         side,
@@ -708,26 +708,56 @@ export async function registerRoutes(
         timestamp: new Date().toISOString()
       });
 
-      // In a full implementation, this would also:
-      // 1. Generate EIP-712 signature for the order
-      // 2. Submit to CLOB API with builder headers
-      // 3. Update order with Polymarket order ID and status
+      // Execute the order on Polymarket CLOB
+      const executionResult = await executePolymarketOrder(
+        tokenId,
+        side as "BUY" | "SELL",
+        price,
+        size
+      );
 
-      res.json({
-        success: true,
-        message: "Order submitted to Polymarket",
-        order: {
-          id: savedOrder.id,
-          tokenId,
-          side,
-          outcome,
-          price,
-          size,
-          totalCost,
-          status: savedOrder.status,
-          createdAt: savedOrder.createdAt
-        }
-      });
+      console.log("Polymarket execution result:", executionResult);
+
+      if (executionResult.success && executionResult.orderId) {
+        // Update order with Polymarket order ID and normalized status
+        // executionResult.status is already normalized to lowercase (open, filled, etc.)
+        const orderStatus = executionResult.status || "open";
+        await storage.updatePolymarketOrder(savedOrder.id, {
+          polymarketOrderId: executionResult.orderId,
+          status: orderStatus,
+        });
+
+        res.json({
+          success: true,
+          message: "Order placed on Polymarket",
+          order: {
+            id: savedOrder.id,
+            polymarketOrderId: executionResult.orderId,
+            tokenId,
+            side,
+            outcome,
+            price,
+            size,
+            totalCost,
+            status: orderStatus,
+            createdAt: savedOrder.createdAt
+          }
+        });
+      } else {
+        // Mark order as failed
+        await storage.updatePolymarketOrder(savedOrder.id, {
+          status: "failed",
+        });
+
+        res.status(400).json({
+          success: false,
+          error: executionResult.error || "Failed to execute order on Polymarket",
+          order: {
+            id: savedOrder.id,
+            status: "failed"
+          }
+        });
+      }
     } catch (error) {
       console.error("Failed to place Polymarket order:", error);
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -749,7 +779,7 @@ export async function registerRoutes(
     }
   });
 
-  // Sync order statuses from Polymarket (placeholder for future API integration)
+  // Sync order statuses from Polymarket CLOB API
   app.post("/api/polymarket/orders/sync", async (req, res) => {
     try {
       const { userId } = req.body;
@@ -757,18 +787,52 @@ export async function registerRoutes(
         return res.status(400).json({ error: "userId is required" });
       }
 
+      const { getOrderStatus } = await import("./polymarket");
       const orders = await storage.getPolymarketOrdersByUser(userId);
       
-      // In future: poll Polymarket API for actual order statuses
-      // For now, return existing orders with lastSyncedAt updated
       const syncedOrders = [];
       for (const order of orders) {
-        // If order has polymarketOrderId, we could check its status
-        // For now, just update lastSyncedAt
-        const updated = await storage.updatePolymarketOrder(order.id, {
-          lastSyncedAt: new Date()
-        });
-        if (updated) syncedOrders.push(updated);
+        // If order has polymarketOrderId, fetch its status from CLOB
+        if (order.polymarketOrderId) {
+          try {
+            const clobOrder = await getOrderStatus(order.polymarketOrderId);
+            if (clobOrder) {
+              // Use the normalized status from getOrderStatus
+              const newStatus = clobOrder.normalizedStatus || order.status;
+              
+              // Determine filled size
+              let filledSize = 0;
+              if (clobOrder.sizeMatched !== undefined) {
+                filledSize = parseFloat(clobOrder.sizeMatched) || 0;
+              } else if (newStatus === "filled") {
+                filledSize = order.size;
+              }
+
+              const updated = await storage.updatePolymarketOrder(order.id, {
+                status: newStatus,
+                filledSize: filledSize,
+                lastSyncedAt: new Date()
+              });
+              if (updated) syncedOrders.push(updated);
+            } else {
+              // Could not fetch order status, just update lastSyncedAt
+              const updated = await storage.updatePolymarketOrder(order.id, {
+                lastSyncedAt: new Date()
+              });
+              if (updated) syncedOrders.push(updated);
+            }
+          } catch (syncError) {
+            console.error(`Failed to sync order ${order.id}:`, syncError);
+            // Continue with next order
+            syncedOrders.push(order);
+          }
+        } else {
+          // No Polymarket order ID, just update lastSyncedAt
+          const updated = await storage.updatePolymarketOrder(order.id, {
+            lastSyncedAt: new Date()
+          });
+          if (updated) syncedOrders.push(updated);
+        }
       }
 
       res.json({

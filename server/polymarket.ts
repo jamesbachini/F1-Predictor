@@ -1,7 +1,228 @@
 import { createHmac } from "crypto";
+import { ClobClient, Side, OrderType } from "@polymarket/clob-client";
+import { Wallet } from "@ethersproject/wallet";
 
 const GAMMA_API_URL = "https://gamma-api.polymarket.com";
 const CLOB_API_URL = "https://clob.polymarket.com";
+const POLYGON_CHAIN_ID = 137;
+
+// Signature types for Polymarket
+// 0: EOA (Externally Owned Account) - direct wallet
+// 1: Email/Magic Login wallet (PolyProxy)
+// 2: Browser wallet with Polymarket Proxy (PolyGnosisSafe)
+const SIGNATURE_TYPE = 0; // EOA since we're using a direct private key
+
+// Cached CLOB client instance
+let clobClientInstance: ClobClient | null = null;
+let clobClientInitPromise: Promise<ClobClient> | null = null;
+
+// Initialize or get the CLOB client with API credentials
+async function getClobClient(): Promise<ClobClient | null> {
+  // Private key is securely stored in Replit Secrets, accessed via environment variable
+  const privateKey = process.env.POLY_BUILDER_PRIVATE_KEY;
+  
+  if (!privateKey) {
+    console.warn("POLY_BUILDER_PRIVATE_KEY not configured in environment secrets");
+    return null;
+  }
+
+  // Return cached instance if available
+  if (clobClientInstance) {
+    return clobClientInstance;
+  }
+
+  // Avoid multiple concurrent initializations
+  if (clobClientInitPromise) {
+    return clobClientInitPromise;
+  }
+
+  clobClientInitPromise = (async () => {
+    try {
+      // Ensure private key has 0x prefix
+      const formattedKey = privateKey.startsWith("0x") ? privateKey : `0x${privateKey}`;
+      
+      // Use ethers v5 Wallet from @ethersproject/wallet (bundled with clob-client)
+      const wallet = new Wallet(formattedKey);
+      const walletAddress = await wallet.getAddress();
+      
+      // First create a temporary client to derive API credentials
+      const tempClient = new ClobClient(
+        CLOB_API_URL,
+        POLYGON_CHAIN_ID,
+        wallet
+      );
+
+      // Derive or create API credentials
+      const creds = await tempClient.createOrDeriveApiKey();
+      
+      // Create the full client with credentials, signature type, and funder
+      // For EOA (signatureType 0), the funder is the wallet address itself
+      const client = new ClobClient(
+        CLOB_API_URL,
+        POLYGON_CHAIN_ID,
+        wallet,
+        creds,
+        SIGNATURE_TYPE,
+        walletAddress // funder - the address that funds the trades
+      );
+      
+      console.log("CLOB client initialized successfully for address:", walletAddress);
+      clobClientInstance = client;
+      return client;
+    } catch (error) {
+      console.error("Failed to initialize CLOB client:", error);
+      clobClientInitPromise = null;
+      throw error;
+    }
+  })();
+
+  return clobClientInitPromise;
+}
+
+// Check if order execution is available
+export function hasOrderExecutionCredentials(): boolean {
+  return !!process.env.POLY_BUILDER_PRIVATE_KEY;
+}
+
+// Order execution result
+export interface OrderExecutionResult {
+  success: boolean;
+  orderId?: string;
+  status?: string;
+  filledSize?: number;
+  message?: string;
+  error?: string;
+}
+
+// Execute a limit order on Polymarket CLOB
+export async function executePolymarketOrder(
+  tokenId: string,
+  side: "BUY" | "SELL",
+  price: number,
+  size: number,
+  negRisk: boolean = true // F1 championship markets use negative risk
+): Promise<OrderExecutionResult> {
+  try {
+    const client = await getClobClient();
+    if (!client) {
+      return {
+        success: false,
+        error: "CLOB client not available - check environment secrets"
+      };
+    }
+
+    console.log("Creating order:", { tokenId, side, price, size, negRisk });
+
+    // Convert string side to Side enum
+    const orderSide = side === "BUY" ? Side.BUY : Side.SELL;
+
+    // Create and sign a limit order with required options
+    const order = await client.createOrder(
+      {
+        tokenID: tokenId,
+        side: orderSide,
+        price: price,
+        size: size,
+      },
+      {
+        tickSize: "0.01", // Standard tick size for most markets
+        negRisk: negRisk, // F1 markets typically use negative risk
+      }
+    );
+
+    console.log("Order created, submitting to CLOB...");
+
+    // Submit the order to the CLOB as GTC (Good-Till-Cancelled)
+    const response = await client.postOrder(order, OrderType.GTC);
+
+    console.log("Order response:", response);
+
+    if (response && response.orderID) {
+      return {
+        success: true,
+        orderId: response.orderID,
+        status: normalizeOrderStatus(response.status),
+        message: "Order placed successfully on Polymarket"
+      };
+    } else {
+      return {
+        success: false,
+        error: response?.errorMsg || "Failed to place order - no order ID returned"
+      };
+    }
+  } catch (error) {
+    console.error("Failed to execute Polymarket order:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return {
+      success: false,
+      error: errorMessage
+    };
+  }
+}
+
+// Normalize CLOB order status to our schema vocabulary
+function normalizeOrderStatus(clobStatus: string | undefined): string {
+  if (!clobStatus) return "pending";
+  
+  const statusUpper = clobStatus.toUpperCase();
+  switch (statusUpper) {
+    case "OPEN":
+    case "LIVE":
+      return "open";
+    case "MATCHED":
+    case "FILLED":
+      return "filled";
+    case "CANCELED":
+    case "CANCELLED":
+      return "cancelled";
+    case "EXPIRED":
+      return "expired";
+    case "PARTIAL":
+    case "PARTIALLY_FILLED":
+      return "partial";
+    default:
+      return "pending";
+  }
+}
+
+// Get order status from CLOB
+export async function getOrderStatus(orderId: string): Promise<any> {
+  try {
+    const client = await getClobClient();
+    if (!client) {
+      return null;
+    }
+
+    const order = await client.getOrder(orderId);
+    if (order) {
+      // Normalize status before returning
+      return {
+        ...order,
+        normalizedStatus: normalizeOrderStatus(order.status)
+      };
+    }
+    return order;
+  } catch (error) {
+    console.error("Failed to get order status:", error);
+    return null;
+  }
+}
+
+// Get all open orders for the builder account
+export async function getOpenOrders(): Promise<any[]> {
+  try {
+    const client = await getClobClient();
+    if (!client) {
+      return [];
+    }
+
+    const orders = await client.getOpenOrders();
+    return orders || [];
+  } catch (error) {
+    console.error("Failed to get open orders:", error);
+    return [];
+  }
+}
 
 // Cache for 24h price changes - per-token timestamps for proper expiration
 interface TokenPriceChange {
